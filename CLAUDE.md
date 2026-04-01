@@ -26,7 +26,8 @@ ENFORCEMENT (this project, makes it impossible to skip)
 ├── hooks/verify-task.sh       TaskCompleted: block if tests fail or new code has no tests
 └── hooks/verify-stop.sh       Stop: block if lint/test/build fail
 
-    + Stop agent hook config    Block if substantial changes shipped without code review
+    + Stop agent hook config    Block if substantial source changes shipped without code review
+                                (auto-skips docs/config-only changes: .md, .txt, .json, .yml, .toml, .env)
 
 EXISTING ENFORCEMENT (already built, unchanged)
 ├── hooks/post_tool_use.sh     Format + lint every file edit
@@ -77,6 +78,23 @@ claude-dev-stand-guard/
 - The existing `post_tool_use.sh`, `bash-safety.sh`, and `task_detector.py` must not be replaced or broken.
 - Agent hooks use Sonnet. Prompt hooks use Sonnet. Both are acceptable per user preference.
 - All scripts must work on Linux and macOS.
+
+## Cross-platform sync (claude-config-sync)
+
+These hooks sync across machines via `claude-config-sync`, which manages `~/.claude/` as a git repo.
+
+**How it works automatically:**
+- `claude-config-sync` pushes `settings.json` and `hooks/` on SessionEnd, pulls on SessionStart
+- Per-platform settings are preserved: `settings.linux.json`, `settings.darwin.json`, `settings.windows.json`
+- Hook commands are auto-adapted on pull: `bash script.sh` becomes `powershell script.ps1` on Windows (and reverse on Unix)
+- Home directory paths in settings.json are rewritten to the current machine's home
+
+**Windows support requires `.ps1` equivalents.** The sync tool assumes a `.ps1` file exists for every `.sh` file. To support Windows, provide:
+- `hooks/verify-task.ps1`
+- `hooks/verify-stop.ps1`
+- `hooks/lib/detect-stack.ps1`
+
+Without these, hooks sync to Windows but silently fail (the `.ps1` files don't exist). Linux and macOS work regardless.
 
 ## Supported stacks (auto-detected)
 
