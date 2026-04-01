@@ -99,7 +99,7 @@ STOP_HOOKS="[$STOP_CMD_HOOK, $STOP_AGENT_HOOK]"
 NEW_SETTINGS="$(jq \
     --argjson task_hook "$TASK_HOOK" \
     --argjson stop_hooks "$STOP_HOOKS" \
-    '.hooks.TaskCompleted = $task_hook | .hooks.Stop = ((.hooks.Stop // []) + $stop_hooks)' \
+    '.hooks.TaskCompleted = $task_hook | .hooks.Stop = ((.hooks.Stop // []) + $stop_hooks) | .hooks.SubagentStop = ((.hooks.SubagentStop // []) + $stop_hooks)' \
     "$SETTINGS")"
 
 if [ "$DRY_RUN" = true ]; then
@@ -107,6 +107,7 @@ if [ "$DRY_RUN" = true ]; then
     echo ""
     echo "  hooks.TaskCompleted: command hook -> verify-task.sh"
     echo "  hooks.Stop[0]: command hook -> verify-stop.sh"
+    echo "  hooks.SubagentStop: mirrors Stop hooks (subagents get same gates)"
     echo "  hooks.Stop[1]: agent hook -> code review check (Sonnet)"
     echo ""
     echo "[DRY RUN] Would copy files:"
