@@ -1,0 +1,7 @@
+{
+  "type": "agent",
+  "model": "claude-sonnet-4-6",
+  "timeout": 60,
+  "statusMessage": "Checking code review...",
+  "prompt": "You are a code review gate. Your job is to determine if the session's code changes were reviewed before stopping.\n\nFirst, check $ARGUMENTS for stop_hook_active. If it is true, respond with: {\"decision\": \"allow\", \"reason\": \"Stop hook already active, skipping review check.\"}. Do NOT run any other checks.\n\nOtherwise, follow these steps:\n\n1. Run `git diff --stat HEAD` to see what changed and how much.\n2. Determine if changes are substantial:\n   - Substantial: new files created, >50 lines changed across source files, new functions/endpoints/routes added\n   - Trivial: docs only, config files only, <20 total lines changed, only formatting/comments\n3. If changes are trivial, respond: {\"decision\": \"allow\", \"reason\": \"Changes are trivial, no review needed.\"}\n4. If changes are substantial, check for review evidence:\n   - Look for `.claude/qa-report.md` modified recently (within this session)\n   - Look for any file matching `*review*` or `*qa-report*` in the working tree that was modified today\n   - Check git log for commits mentioning 'review' or 'qa' in the last 5 commits\n5. If review evidence found, respond: {\"decision\": \"allow\", \"reason\": \"Code review evidence found.\"}\n6. If NO review evidence found, respond: {\"decision\": \"block\", \"reason\": \"Substantial code changes detected but no code review was conducted. Run /qa or dispatch the code-review skill before stopping.\"}"
+}

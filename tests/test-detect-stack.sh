@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+# Tests for hooks/lib/detect-stack.sh
+# Run: bash tests/test-detect-stack.sh
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DETECT_STACK="$SCRIPT_DIR/../hooks/lib/detect-stack.sh"
+
+PASS=0
+FAIL=0
+TOTAL=0
+
+# Colors (if terminal supports it)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+assert_eq() {
+    local label="$1" expected="$2" actual="$3"
+    TOTAL=$((TOTAL + 1))
+    if [ "$expected" = "$actual" ]; then
+        PASS=$((PASS + 1))
+        printf "${GREEN}PASS${NC} %s\n" "$label"
+    else
+        FAIL=$((FAIL + 1))
+        printf "${RED}FAIL${NC} %s\n  expected: '%s'\n  actual:   '%s'\n" "$label" "$expected" "$actual"
+    fi
+}
+
+assert_not_empty() {
+    local label="$1" actual="$2"
+    TOTAL=$((TOTAL + 1))
+    if [ -n "$actual" ]; then
+        PASS=$((PASS + 1))
+        printf "${GREEN}PASS${NC} %s (got: '%s')\n" "$label" "$actual"
+    else
+        FAIL=$((FAIL + 1))
+        printf "${RED}FAIL${NC} %s\n  expected non-empty, got empty\n" "$label"
+    fi
+}
+
+assert_empty() {
+    local label="$1" actual="$2"
+    TOTAL=$((TOTAL + 1))
+    if [ -z "$actual" ]; then
+        PASS=$((PASS + 1))
+        printf "${GREEN}PASS${NC} %s\n" "$label"
+    else
+        FAIL=$((FAIL + 1))
+        printf "${RED}FAIL${NC} %s\n  expected empty, got: '%s'\n" "$label" "$actual"
+    fi
+}
+
+# Helper: source detect-stack in a subshell at a given directory, print vars
+run_detect() {
+    local dir="$1"
+    (
+        cd "$dir"
+        # Reset vars so we get clean detection
+        DETECTED_STACK=""
+        TEST_CMD=""
+        BUILD_CMD=""
+        LINT_CMD=""
+        SOURCE_PATTERN=""
+        source "$DETECT_STACK"
+        printf '%s\n' "$DETECTED_STACK" "$TEST_CMD" "$BUILD_CMD" "$LINT_CMD" "$SOURCE_PATTERN"
+    )
+}
+
+# Parse the 5-line output from run_detect
+parse_detect() {
+    local output="$1"
+    DETECTED_STACK="$(echo "$output" | sed -n '1p')"
+    TEST_CMD="$(echo "$output" | sed -n '2p')"
+    BUILD_CMD="$(echo "$output" | sed -n '3p')"
+    LINT_CMD="$(echo "$output" | sed -n '4p')"
+    SOURCE_PATTERN="$(echo "$output" | sed -n '5p')"
+}
+
+# Create a temp dir that gets cleaned up on exit
+TMPBASE="$(mktemp -d)"
+trap 'rm -rf "$TMPBASE"' EXIT
+
+printf "\n${YELLOW}=== Phase 1: detect-stack.sh tests ===${NC}\n\n"
+
+# --------------------------------------------------------------------------
+# Test 1: Empty directory - no stack detected
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/empty"
+mkdir -p "$DIR"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Empty dir: no stack detected" "" "$DETECTED_STACK"
+assert_empty "Empty dir: no TEST_CMD" "$TEST_CMD"
+assert_empty "Empty dir: no BUILD_CMD" "$BUILD_CMD"
+assert_empty "Empty dir: no LINT_CMD" "$LINT_CMD"
+
+# --------------------------------------------------------------------------
+# Test 2: Node/TS project with all scripts in package.json
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-full"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": {
+    "test": "jest",
+    "build": "tsc",
+    "lint": "eslint ."
+  }
+}
+PJSON
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Node full: stack detected" "node" "$DETECTED_STACK"
+assert_not_empty "Node full: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+# TEST_CMD depends on npm being installed (it is on most systems)
+if command -v npm &>/dev/null; then
+    assert_eq "Node full: TEST_CMD" "npm run test" "$TEST_CMD"
+    assert_eq "Node full: BUILD_CMD" "npm run build" "$BUILD_CMD"
+    assert_eq "Node full: LINT_CMD" "npm run lint" "$LINT_CMD"
+else
+    assert_empty "Node full (no npm): TEST_CMD empty" "$TEST_CMD"
+    assert_empty "Node full (no npm): BUILD_CMD empty" "$BUILD_CMD"
+    assert_empty "Node full (no npm): LINT_CMD empty" "$LINT_CMD"
+fi
+
+# --------------------------------------------------------------------------
+# Test 3: Node project without test script in package.json
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-no-test"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": {
+    "build": "tsc"
+  }
+}
+PJSON
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Node no-test: stack detected" "node" "$DETECTED_STACK"
+assert_empty "Node no-test: no TEST_CMD" "$TEST_CMD"
+if command -v npm &>/dev/null; then
+    assert_eq "Node no-test: BUILD_CMD set" "npm run build" "$BUILD_CMD"
+else
+    assert_empty "Node no-test (no npm): BUILD_CMD empty" "$BUILD_CMD"
+fi
+
+# --------------------------------------------------------------------------
+# Test 4: Node project with empty scripts
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-empty-scripts"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "name": "bare-project",
+  "scripts": {}
+}
+PJSON
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Node empty scripts: stack detected" "node" "$DETECTED_STACK"
+assert_empty "Node empty scripts: no TEST_CMD" "$TEST_CMD"
+assert_empty "Node empty scripts: no BUILD_CMD" "$BUILD_CMD"
+assert_empty "Node empty scripts: no LINT_CMD" "$LINT_CMD"
+
+# --------------------------------------------------------------------------
+# Test 5: Python project (pyproject.toml)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/python-pyproject"
+mkdir -p "$DIR"
+touch "$DIR/pyproject.toml"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Python pyproject: stack detected" "python" "$DETECTED_STACK"
+if command -v pytest &>/dev/null; then
+    assert_eq "Python pyproject: TEST_CMD" "pytest" "$TEST_CMD"
+else
+    assert_empty "Python pyproject (no pytest): TEST_CMD empty" "$TEST_CMD"
+fi
+assert_empty "Python: no BUILD_CMD" "$BUILD_CMD"
+if command -v ruff &>/dev/null; then
+    assert_eq "Python pyproject: LINT_CMD" "ruff check ." "$LINT_CMD"
+else
+    assert_empty "Python pyproject (no ruff): LINT_CMD empty" "$LINT_CMD"
+fi
+assert_not_empty "Python: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 6: Python project (requirements.txt only)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/python-requirements"
+mkdir -p "$DIR"
+touch "$DIR/requirements.txt"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Python requirements.txt: stack detected" "python" "$DETECTED_STACK"
+
+# --------------------------------------------------------------------------
+# Test 7: Rust project
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/rust"
+mkdir -p "$DIR"
+touch "$DIR/Cargo.toml"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Rust: stack detected" "rust" "$DETECTED_STACK"
+if command -v cargo &>/dev/null; then
+    assert_eq "Rust: TEST_CMD" "cargo test" "$TEST_CMD"
+    assert_eq "Rust: BUILD_CMD" "cargo build" "$BUILD_CMD"
+    assert_eq "Rust: LINT_CMD" "cargo clippy" "$LINT_CMD"
+else
+    assert_empty "Rust (no cargo): TEST_CMD empty" "$TEST_CMD"
+    assert_empty "Rust (no cargo): BUILD_CMD empty" "$BUILD_CMD"
+    assert_empty "Rust (no cargo): LINT_CMD empty" "$LINT_CMD"
+fi
+assert_not_empty "Rust: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 8: Go project
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/golang"
+mkdir -p "$DIR"
+touch "$DIR/go.mod"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Go: stack detected" "go" "$DETECTED_STACK"
+if command -v go &>/dev/null; then
+    assert_eq "Go: TEST_CMD" "go test ./..." "$TEST_CMD"
+    assert_eq "Go: BUILD_CMD" "go build ./..." "$BUILD_CMD"
+    assert_eq "Go: LINT_CMD" "go vet ./..." "$LINT_CMD"
+else
+    assert_empty "Go (no go): TEST_CMD empty" "$TEST_CMD"
+    assert_empty "Go (no go): BUILD_CMD empty" "$BUILD_CMD"
+    assert_empty "Go (no go): LINT_CMD empty" "$LINT_CMD"
+fi
+assert_not_empty "Go: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 9: .NET project
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/dotnet"
+mkdir -p "$DIR"
+touch "$DIR/MyApp.csproj"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq ".NET: stack detected" "dotnet" "$DETECTED_STACK"
+if command -v dotnet &>/dev/null; then
+    assert_eq ".NET: TEST_CMD" "dotnet test" "$TEST_CMD"
+    assert_eq ".NET: BUILD_CMD" "dotnet build" "$BUILD_CMD"
+else
+    assert_empty ".NET (no dotnet): TEST_CMD empty" "$TEST_CMD"
+    assert_empty ".NET (no dotnet): BUILD_CMD empty" "$BUILD_CMD"
+fi
+assert_empty ".NET: no LINT_CMD" "$LINT_CMD"
+assert_not_empty ".NET: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 10: Swift project
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/swift"
+mkdir -p "$DIR"
+touch "$DIR/Package.swift"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Swift: stack detected" "swift" "$DETECTED_STACK"
+if command -v swift &>/dev/null; then
+    assert_eq "Swift: TEST_CMD" "swift test" "$TEST_CMD"
+    assert_eq "Swift: BUILD_CMD" "swift build" "$BUILD_CMD"
+else
+    assert_empty "Swift (no swift): TEST_CMD empty" "$TEST_CMD"
+    assert_empty "Swift (no swift): BUILD_CMD empty" "$BUILD_CMD"
+fi
+if command -v swiftlint &>/dev/null; then
+    assert_eq "Swift: LINT_CMD" "swiftlint" "$LINT_CMD"
+else
+    assert_empty "Swift (no swiftlint): LINT_CMD empty" "$LINT_CMD"
+fi
+assert_not_empty "Swift: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 11: Monorepo detection (marker in parent dir)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/monorepo"
+mkdir -p "$DIR/packages/sub"
+touch "$DIR/package.json"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": { "test": "jest" }
+}
+PJSON
+OUTPUT="$(run_detect "$DIR/packages/sub")"
+parse_detect "$OUTPUT"
+assert_eq "Monorepo: stack detected from parent" "node" "$DETECTED_STACK"
+
+# --------------------------------------------------------------------------
+# Test 12: Monorepo stops at filesystem root (no infinite walk)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/no-markers-deep/a/b/c"
+mkdir -p "$DIR"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Deep no-markers: no stack detected" "" "$DETECTED_STACK"
+
+# --------------------------------------------------------------------------
+# Test 13: Closest marker wins (subproject overrides parent)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/nested-stacks"
+mkdir -p "$DIR/frontend"
+touch "$DIR/go.mod"
+cat > "$DIR/frontend/package.json" <<'PJSON'
+{
+  "scripts": { "test": "vitest" }
+}
+PJSON
+OUTPUT="$(run_detect "$DIR/frontend")"
+parse_detect "$OUTPUT"
+assert_eq "Nested stacks: closest marker wins" "node" "$DETECTED_STACK"
+
+# --------------------------------------------------------------------------
+# Test 14: Script does not error on source (exit code 0)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/exit-code-check"
+mkdir -p "$DIR"
+EXIT_CODE=0
+(cd "$DIR" && source "$DETECT_STACK") || EXIT_CODE=$?
+TOTAL=$((TOTAL + 1))
+if [ "$EXIT_CODE" -eq 0 ]; then
+    PASS=$((PASS + 1))
+    printf "${GREEN}PASS${NC} Exit code 0 on empty dir\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "${RED}FAIL${NC} Exit code %d on empty dir (expected 0)\n" "$EXIT_CODE"
+fi
+
+# --------------------------------------------------------------------------
+# Test 15: Python pyproject.toml takes priority over requirements.txt
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/python-both"
+mkdir -p "$DIR"
+touch "$DIR/pyproject.toml"
+touch "$DIR/requirements.txt"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Python both markers: stack detected" "python" "$DETECTED_STACK"
+# Should still work fine, just detect python once
+TOTAL=$((TOTAL + 1))
+if [ "$DETECTED_STACK" = "python" ]; then
+    PASS=$((PASS + 1))
+    printf "${GREEN}PASS${NC} Python both markers: no double detection\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "${RED}FAIL${NC} Python both markers: unexpected stack '%s'\n" "$DETECTED_STACK"
+fi
+
+# --------------------------------------------------------------------------
+# Test 16: package.json without scripts key at all
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-no-scripts-key"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "name": "no-scripts"
+}
+PJSON
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Node no scripts key: stack detected" "node" "$DETECTED_STACK"
+assert_empty "Node no scripts key: no TEST_CMD" "$TEST_CMD"
+assert_empty "Node no scripts key: no BUILD_CMD" "$BUILD_CMD"
+assert_empty "Node no scripts key: no LINT_CMD" "$LINT_CMD"
+
+# --------------------------------------------------------------------------
+# Results
+# --------------------------------------------------------------------------
+printf "\n${YELLOW}=== Results ===${NC}\n"
+printf "Total: %d | ${GREEN}Pass: %d${NC} | ${RED}Fail: %d${NC}\n\n" "$TOTAL" "$PASS" "$FAIL"
+
+if [ "$FAIL" -gt 0 ]; then
+    exit 1
+fi
+exit 0
