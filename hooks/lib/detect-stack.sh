@@ -11,6 +11,26 @@ BUILD_CMD=""
 LINT_CMD=""
 SOURCE_PATTERN=""
 
+# Augment PATH with common tool locations (before any _has_cmd calls)
+_augment_path() {
+    local candidate
+    for candidate in \
+        "$HOME/.local/bin" \
+        "$HOME/.cargo/bin" \
+        "$HOME/.bun/bin" \
+        "/usr/local/bin" \
+        "/opt/homebrew/bin"; do
+        if [ -d "$candidate" ]; then
+            case ":$PATH:" in
+                *":$candidate:"*) ;;
+                *) PATH="$candidate:$PATH" ;;
+            esac
+        fi
+    done
+    export PATH
+}
+_augment_path
+
 # Check if a command exists
 _has_cmd() {
     command -v "$1" >/dev/null 2>&1
@@ -26,6 +46,31 @@ _has_npm_script() {
         return 1
     fi
     jq -e ".scripts.\"$script\" // empty" "$pkg" >/dev/null 2>&1
+}
+
+# Detect Node package manager from lockfile
+_detect_node_pkg_manager() {
+    local dir="$1"
+    if [ -f "$dir/pnpm-lock.yaml" ]; then
+        echo "pnpm"
+    elif [ -f "$dir/yarn.lock" ]; then
+        echo "yarn"
+    elif [ -f "$dir/bun.lockb" ] || [ -f "$dir/bun.lock" ]; then
+        echo "bun"
+    else
+        echo "npm"
+    fi
+}
+
+# Build command string for the detected Node package manager
+_node_cmd() {
+    local mgr="$1" script="$2"
+    case "$mgr" in
+        npm)   echo "npm run $script" ;;
+        pnpm)  echo "pnpm $script" ;;
+        yarn)  echo "yarn $script" ;;
+        bun)   echo "bun run $script" ;;
+    esac
 }
 
 # Walk up from cwd to find a marker file. Returns the directory containing it.
@@ -85,15 +130,20 @@ _detect_stack() {
             DETECTED_STACK="node"
             SOURCE_PATTERN='\.(js|jsx|ts|tsx|mjs|cjs)$'
             local pkg="$dir/package.json"
-            if _has_cmd npm; then
+            local mgr
+            mgr="$(_detect_node_pkg_manager "$dir")"
+            if ! _has_cmd "$mgr"; then
+                mgr="npm"
+            fi
+            if _has_cmd "$mgr"; then
                 if _has_npm_script "$pkg" "test"; then
-                    TEST_CMD="npm run test"
+                    TEST_CMD="$(_node_cmd "$mgr" "test")"
                 fi
                 if _has_npm_script "$pkg" "build"; then
-                    BUILD_CMD="npm run build"
+                    BUILD_CMD="$(_node_cmd "$mgr" "build")"
                 fi
                 if _has_npm_script "$pkg" "lint"; then
-                    LINT_CMD="npm run lint"
+                    LINT_CMD="$(_node_cmd "$mgr" "lint")"
                 fi
             fi
             return 0

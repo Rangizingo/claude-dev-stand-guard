@@ -20,13 +20,18 @@ if [ ! -f "$SETTINGS" ]; then
     exit 1
 fi
 
-# --- Check if installed ---
+# --- Check if anything is installed ---
 
-has_task_hook() {
-    jq -e '.hooks.TaskCompleted // empty | length > 0' "$SETTINGS" >/dev/null 2>&1
+_has_any_hook() {
+    jq -e '
+        (.hooks.TaskCompleted // [] | map(.hooks // [] | map(.command // "" | test("verify-task")) | any) | any) or
+        (.hooks.Stop // [] | map(.hooks // [] | map(.command // "" | test("verify-stop|review-gate")) | any) | any) or
+        (.hooks.PostToolUse // [] | map(.hooks // [] | map(.command // "" | test("post_tool_use")) | any) | any) or
+        (.hooks.PreToolUse // [] | map(.hooks // [] | map(.command // "" | test("bash-safety")) | any) | any)
+    ' "$SETTINGS" >/dev/null 2>&1
 }
 
-if ! has_task_hook; then
+if ! _has_any_hook; then
     echo "stand-guard hooks are not installed. Nothing to remove."
     exit 0
 fi
@@ -40,22 +45,52 @@ echo "Backup: $BACKUP"
 
 # --- Remove hooks from settings.json ---
 
-# Remove TaskCompleted entirely (we own it)
-# Remove Stop entries that reference our scripts
-# Keep any Stop entries that don't reference verify-stop.sh or review agent
+# Remove our entries from each hook type, clean up empty arrays
 NEW_SETTINGS="$(jq '
-    del(.hooks.TaskCompleted) |
-    if .hooks.Stop then
+    # TaskCompleted: remove entries with verify-task
+    | if .hooks.TaskCompleted then
+        .hooks.TaskCompleted = [
+            .hooks.TaskCompleted[] |
+            select(.hooks // [] | map(.command // "" | test("verify-task")) | any | not)
+        ] |
+        if (.hooks.TaskCompleted | length) == 0 then del(.hooks.TaskCompleted) else . end
+      else . end
+
+    # Stop: remove verify-stop and review-gate entries
+    | if .hooks.Stop then
         .hooks.Stop = [
             .hooks.Stop[] |
-            select(
-                (.hooks // [] | any(.command // "" | test("verify-stop"))) or
-                (.hooks // [] | any(.prompt // "" | test("code review gate")))
-                | not
-            )
+            select(.hooks // [] | map(.command // "" | test("verify-stop|review-gate")) | any | not)
         ] |
         if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end
-    else . end
+      else . end
+
+    # SubagentStop: same as Stop
+    | if .hooks.SubagentStop then
+        .hooks.SubagentStop = [
+            .hooks.SubagentStop[] |
+            select(.hooks // [] | map(.command // "" | test("verify-stop|review-gate")) | any | not)
+        ] |
+        if (.hooks.SubagentStop | length) == 0 then del(.hooks.SubagentStop) else . end
+      else . end
+
+    # PostToolUse: remove post_tool_use entries
+    | if .hooks.PostToolUse then
+        .hooks.PostToolUse = [
+            .hooks.PostToolUse[] |
+            select(.hooks // [] | map(.command // "" | test("post_tool_use")) | any | not)
+        ] |
+        if (.hooks.PostToolUse | length) == 0 then del(.hooks.PostToolUse) else . end
+      else . end
+
+    # PreToolUse: remove bash-safety entries
+    | if .hooks.PreToolUse then
+        .hooks.PreToolUse = [
+            .hooks.PreToolUse[] |
+            select(.hooks // [] | map(.command // "" | test("bash-safety")) | any | not)
+        ] |
+        if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
+      else . end
 ' "$SETTINGS")"
 
 echo "$NEW_SETTINGS" | jq . > "$SETTINGS"
@@ -65,25 +100,34 @@ echo "Updated: $SETTINGS"
 
 REMOVED=0
 
-if [ -f "$HOOKS_DIR/verify-task.sh" ]; then
-    rm "$HOOKS_DIR/verify-task.sh"
-    echo "Removed: $HOOKS_DIR/verify-task.sh"
-    REMOVED=$((REMOVED + 1))
-fi
+# Bash hooks
+for f in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh; do
+    if [ -f "$HOOKS_DIR/$f" ]; then
+        rm "$HOOKS_DIR/$f"
+        echo "Removed: $HOOKS_DIR/$f"
+        REMOVED=$((REMOVED + 1))
+    fi
+done
 
-if [ -f "$HOOKS_DIR/verify-stop.sh" ]; then
-    rm "$HOOKS_DIR/verify-stop.sh"
-    echo "Removed: $HOOKS_DIR/verify-stop.sh"
-    REMOVED=$((REMOVED + 1))
-fi
+# PowerShell hooks
+for f in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1; do
+    if [ -f "$HOOKS_DIR/$f" ]; then
+        rm "$HOOKS_DIR/$f"
+        echo "Removed: $HOOKS_DIR/$f"
+        REMOVED=$((REMOVED + 1))
+    fi
+done
 
-if [ -f "$LIB_DIR/detect-stack.sh" ]; then
-    rm "$LIB_DIR/detect-stack.sh"
-    echo "Removed: $LIB_DIR/detect-stack.sh"
-    REMOVED=$((REMOVED + 1))
-fi
+# Lib files
+for f in detect-stack.sh detect-stack.ps1; do
+    if [ -f "$LIB_DIR/$f" ]; then
+        rm "$LIB_DIR/$f"
+        echo "Removed: $LIB_DIR/$f"
+        REMOVED=$((REMOVED + 1))
+    fi
+done
 
-# Only remove lib dir if empty (don't remove other people's files)
+# Only remove lib dir if empty
 if [ -d "$LIB_DIR" ] && [ -z "$(ls -A "$LIB_DIR" 2>/dev/null)" ]; then
     rmdir "$LIB_DIR"
     echo "Removed: $LIB_DIR/ (empty)"
@@ -94,4 +138,3 @@ fi
 echo ""
 echo "stand-guard uninstalled. $REMOVED files removed."
 echo "Backup at: $BACKUP"
-echo "Existing hooks (PostToolUse, PreToolUse, etc.) were not touched."

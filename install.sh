@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh - Install stand-guard enforcement hooks into ~/.claude/
 # Usage: bash install.sh [--dry-run]
-# Merges with existing config. Idempotent. Backs up before changes.
+# Merges with existing config. Idempotent per-hook. Backs up before changes.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,9 +18,6 @@ if [ "${1:-}" = "--dry-run" ]; then
     echo ""
 fi
 
-# Marker comment used to identify our hooks in settings.json
-GUARD_MARKER="stand-guard"
-
 # --- Prerequisites ---
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -33,22 +30,38 @@ if [ ! -f "$SETTINGS" ]; then
     exit 1
 fi
 
-# Validate existing settings.json
 if ! jq empty "$SETTINGS" 2>/dev/null; then
     echo "ERROR: $SETTINGS is not valid JSON." >&2
     exit 1
 fi
 
-# --- Check idempotency ---
+# --- Per-hook idempotency checks ---
 
-is_already_installed() {
-    # Check if our TaskCompleted hook already exists
-    jq -e '.hooks.TaskCompleted // empty | length > 0' "$SETTINGS" >/dev/null 2>&1
+_has_hook() {
+    local hook_type="$1" pattern="$2"
+    jq -e "
+        .hooks.\"$hook_type\" // [] |
+        map(.hooks // [] | map(.command // \"\" | test(\"$pattern\")) | any) |
+        any
+    " "$SETTINGS" >/dev/null 2>&1
 }
 
-if is_already_installed; then
-    echo "stand-guard hooks are already installed."
-    echo "To reinstall, run uninstall.sh first."
+NEED_TASK=false
+NEED_STOP=false
+NEED_STOP_REVIEW=false
+NEED_POST_TOOL_USE=false
+NEED_BASH_SAFETY=false
+
+_has_hook "TaskCompleted" "verify-task" || NEED_TASK=true
+_has_hook "Stop" "verify-stop" || NEED_STOP=true
+_has_hook "Stop" "review-gate" || NEED_STOP_REVIEW=true
+_has_hook "PostToolUse" "post_tool_use" || NEED_POST_TOOL_USE=true
+_has_hook "PreToolUse" "bash-safety" || NEED_BASH_SAFETY=true
+
+if [ "$NEED_TASK" = false ] && [ "$NEED_STOP" = false ] && \
+   [ "$NEED_STOP_REVIEW" = false ] && [ "$NEED_POST_TOOL_USE" = false ] && \
+   [ "$NEED_BASH_SAFETY" = false ]; then
+    echo "stand-guard hooks are already installed. All hooks present."
     exit 0
 fi
 
@@ -64,56 +77,105 @@ else
     echo "[DRY RUN] Would backup $SETTINGS to $SETTINGS.bak.$TIMESTAMP"
 fi
 
-# --- Build new hooks JSON ---
+# --- Hook definitions ---
 
-# TaskCompleted hook entry
-TASK_HOOK='[{
+TASK_HOOK='{
   "hooks": [{
     "type": "command",
     "command": "bash \"$HOME/.claude/hooks/verify-task.sh\"",
-    "timeout": 120
+    "timeout": 120,
+    "statusMessage": "stand-guard: verifying task (tests + coverage)"
   }]
-}]'
+}'
 
-# Stop command hook entry
 STOP_CMD_HOOK='{
   "hooks": [{
     "type": "command",
     "command": "bash \"$HOME/.claude/hooks/verify-stop.sh\"",
-    "timeout": 120
+    "timeout": 120,
+    "statusMessage": "stand-guard: verifying stop (lint + test + build)"
   }]
 }'
 
-# Stop agent hook entry (from config file)
-STOP_AGENT_HOOK_CONFIG="$SCRIPT_DIR/config/review-agent-hook.json"
-STOP_AGENT_HOOK="{
-  \"hooks\": [$(cat "$STOP_AGENT_HOOK_CONFIG")]
-}"
+STOP_REVIEW_HOOK='{
+  "hooks": [{
+    "type": "command",
+    "command": "bash \"$HOME/.claude/hooks/review-gate.sh\"",
+    "timeout": 10,
+    "statusMessage": "stand-guard: checking code review"
+  }]
+}'
 
-# Combine Stop hooks into an array (append to existing if any)
-STOP_HOOKS="[$STOP_CMD_HOOK, $STOP_AGENT_HOOK]"
+POST_TOOL_USE_HOOK='{
+  "matcher": "Write|Edit|MultiEdit",
+  "hooks": [{
+    "type": "command",
+    "command": "bash \"$HOME/.claude/hooks/post_tool_use.sh\"",
+    "timeout": 30,
+    "statusMessage": "stand-guard: format + lint"
+  }]
+}'
 
-# --- Merge into settings.json ---
+BASH_SAFETY_HOOK='{
+  "matcher": "Bash",
+  "hooks": [{
+    "type": "command",
+    "command": "bash \"$HOME/.claude/hooks/bash-safety.sh\"",
+    "statusMessage": "stand-guard: safety check"
+  }]
+}'
 
-# Use jq to merge: add TaskCompleted and Stop hooks without touching existing keys
+# --- Build jq merge expression ---
+
+JQ_EXPR="."
+
+if [ "$NEED_TASK" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.TaskCompleted = [\$task_hook]"
+fi
+
+if [ "$NEED_STOP" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.Stop = ((.hooks.Stop // []) + [\$stop_cmd_hook])"
+    JQ_EXPR="$JQ_EXPR | .hooks.SubagentStop = ((.hooks.SubagentStop // []) + [\$stop_cmd_hook])"
+fi
+
+if [ "$NEED_STOP_REVIEW" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.Stop = ((.hooks.Stop // []) + [\$stop_review_hook])"
+    JQ_EXPR="$JQ_EXPR | .hooks.SubagentStop = ((.hooks.SubagentStop // []) + [\$stop_review_hook])"
+fi
+
+if [ "$NEED_POST_TOOL_USE" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.PostToolUse = ((.hooks.PostToolUse // []) + [\$ptu_hook])"
+fi
+
+if [ "$NEED_BASH_SAFETY" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [\$bs_hook])"
+fi
+
+# --- Apply merge ---
+
 NEW_SETTINGS="$(jq \
     --argjson task_hook "$TASK_HOOK" \
-    --argjson stop_hooks "$STOP_HOOKS" \
-    '.hooks.TaskCompleted = $task_hook | .hooks.Stop = ((.hooks.Stop // []) + $stop_hooks) | .hooks.SubagentStop = ((.hooks.SubagentStop // []) + $stop_hooks)' \
+    --argjson stop_cmd_hook "$STOP_CMD_HOOK" \
+    --argjson stop_review_hook "$STOP_REVIEW_HOOK" \
+    --argjson ptu_hook "$POST_TOOL_USE_HOOK" \
+    --argjson bs_hook "$BASH_SAFETY_HOOK" \
+    "$JQ_EXPR" \
     "$SETTINGS")"
 
 if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] Would add to settings.json:"
+    echo "[DRY RUN] Hooks to add:"
     echo ""
-    echo "  hooks.TaskCompleted: command hook -> verify-task.sh"
-    echo "  hooks.Stop[0]: command hook -> verify-stop.sh"
-    echo "  hooks.SubagentStop: mirrors Stop hooks (subagents get same gates)"
-    echo "  hooks.Stop[1]: agent hook -> code review check (Sonnet)"
+    [ "$NEED_TASK" = true ] && echo "  hooks.TaskCompleted -> verify-task.sh"
+    [ "$NEED_STOP" = true ] && echo "  hooks.Stop -> verify-stop.sh"
+    [ "$NEED_STOP_REVIEW" = true ] && echo "  hooks.Stop -> review-gate.sh"
+    [ "$NEED_POST_TOOL_USE" = true ] && echo "  hooks.PostToolUse -> post_tool_use.sh"
+    [ "$NEED_BASH_SAFETY" = true ] && echo "  hooks.PreToolUse -> bash-safety.sh"
     echo ""
-    echo "[DRY RUN] Would copy files:"
-    echo "  $SCRIPT_DIR/hooks/verify-task.sh -> $HOOKS_DIR/verify-task.sh"
-    echo "  $SCRIPT_DIR/hooks/verify-stop.sh -> $HOOKS_DIR/verify-stop.sh"
-    echo "  $SCRIPT_DIR/hooks/lib/detect-stack.sh -> $LIB_DIR/detect-stack.sh"
+    echo "[DRY RUN] Files to copy:"
+    echo "  hooks/verify-task.sh, verify-stop.sh, review-gate.sh"
+    echo "  hooks/post_tool_use.sh, bash-safety.sh"
+    echo "  hooks/lib/detect-stack.sh"
+    echo "  + .ps1 equivalents for all above"
     echo ""
     echo "[DRY RUN] Merged settings.json diff:"
     diff <(jq --sort-keys . "$SETTINGS") <(echo "$NEW_SETTINGS" | jq --sort-keys .) || true
@@ -129,17 +191,29 @@ echo "Updated: $SETTINGS"
 
 mkdir -p "$LIB_DIR"
 
-cp "$SCRIPT_DIR/hooks/verify-task.sh" "$HOOKS_DIR/verify-task.sh"
-chmod +x "$HOOKS_DIR/verify-task.sh"
-echo "Installed: $HOOKS_DIR/verify-task.sh"
-
-cp "$SCRIPT_DIR/hooks/verify-stop.sh" "$HOOKS_DIR/verify-stop.sh"
-chmod +x "$HOOKS_DIR/verify-stop.sh"
-echo "Installed: $HOOKS_DIR/verify-stop.sh"
+# Bash hooks
+for src in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh; do
+    cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
+    chmod +x "$HOOKS_DIR/$src"
+    echo "Installed: $HOOKS_DIR/$src"
+done
 
 cp "$SCRIPT_DIR/hooks/lib/detect-stack.sh" "$LIB_DIR/detect-stack.sh"
 chmod +x "$LIB_DIR/detect-stack.sh"
 echo "Installed: $LIB_DIR/detect-stack.sh"
+
+# PowerShell hooks (for Windows via claude-config-sync)
+for src in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1; do
+    if [ -f "$SCRIPT_DIR/hooks/$src" ]; then
+        cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
+        echo "Installed: $HOOKS_DIR/$src"
+    fi
+done
+
+if [ -f "$SCRIPT_DIR/hooks/lib/detect-stack.ps1" ]; then
+    cp "$SCRIPT_DIR/hooks/lib/detect-stack.ps1" "$LIB_DIR/detect-stack.ps1"
+    echo "Installed: $LIB_DIR/detect-stack.ps1"
+fi
 
 # --- Summary ---
 
@@ -147,9 +221,11 @@ echo ""
 echo "stand-guard installed successfully."
 echo ""
 echo "Hooks added:"
-echo "  TaskCompleted -> verify-task.sh (blocks if tests fail or no tests written)"
-echo "  Stop -> verify-stop.sh (blocks if lint/test/build fail)"
-echo "  Stop -> review agent (blocks if substantial changes lack code review)"
+[ "$NEED_TASK" = true ] && echo "  TaskCompleted -> verify-task.sh (blocks if tests fail or no tests written)"
+[ "$NEED_STOP" = true ] && echo "  Stop -> verify-stop.sh (blocks if lint/test/build fail)"
+[ "$NEED_STOP_REVIEW" = true ] && echo "  Stop -> review-gate.sh (blocks if substantial changes lack code review)"
+[ "$NEED_POST_TOOL_USE" = true ] && echo "  PostToolUse -> post_tool_use.sh (auto-format + lint on every edit)"
+[ "$NEED_BASH_SAFETY" = true ] && echo "  PreToolUse -> bash-safety.sh (blocks dangerous bash commands)"
 echo ""
 echo "To verify: restart Claude Code and check /hooks"
 echo "To remove: bash $SCRIPT_DIR/uninstall.sh"

@@ -22,23 +22,20 @@ ADVISORY (already built, tells Claude what to do)
 └── hooks/task_detector.py     "Auto-inject protocol on implementation prompts"
 
 ENFORCEMENT (this project, makes it impossible to skip)
-├── hooks/lib/detect-stack.sh  Auto-detect test/build/lint for any stack
+├── hooks/lib/detect-stack.sh  Auto-detect test/build/lint for any stack (+ PATH augmentation)
 ├── hooks/verify-task.sh       TaskCompleted: block if tests fail or new code has no tests
-└── hooks/verify-stop.sh       Stop: block if lint/test/build fail
-
-    + Stop agent hook config    Block if substantial source changes shipped without code review
-                                (auto-skips docs/config-only changes: .md, .txt, .json, .yml, .toml, .env)
-
-EXISTING ENFORCEMENT (already built, unchanged)
-├── hooks/post_tool_use.sh     Format + lint every file edit
-└── hooks/bash-safety.sh       Block destructive commands
+├── hooks/verify-stop.sh       Stop: block if lint/test/build fail
+├── hooks/review-gate.sh       Stop: block if substantial changes lack code review
+├── hooks/post_tool_use.sh     PostToolUse: format + lint every file edit
+├── hooks/bash-safety.sh       PreToolUse: block destructive bash commands
+└── hooks/*.ps1                Windows equivalents (synced via claude-config-sync)
 ```
 
 ## Stack
-- **Language:** Bash (hooks, detection library)
-- **Hook types:** `command` for deterministic gates, `agent` (Sonnet) for judgment-based review check
+- **Language:** Bash (hooks, detection library) + PowerShell (Windows equivalents)
+- **Hook types:** `command` for deterministic gates
 - **Install target:** `~/.claude/` (global, all projects)
-- **Required:** `jq` (JSON parsing in hooks)
+- **Required:** `jq` (JSON parsing in bash hooks; PowerShell uses built-in ConvertFrom-Json)
 - **No other external dependencies**
 
 ## Architecture
@@ -48,16 +45,19 @@ claude-dev-stand-guard/
 ├── plan.md                        # Development tasks and progress
 ├── README.md                      # Documentation + install guide
 ├── hooks/
-│   ├── verify-task.sh             # TaskCompleted: run tests + check test files exist
-│   ├── verify-stop.sh             # Stop: full lint + test + build gate
+│   ├── verify-task.sh (.ps1)      # TaskCompleted: run tests + check test files exist
+│   ├── verify-stop.sh (.ps1)      # Stop: full lint + test + build gate
+│   ├── review-gate.sh (.ps1)      # Stop: block without code review
+│   ├── post_tool_use.sh (.ps1)    # PostToolUse: auto-format + lint on edit
+│   ├── bash-safety.sh (.ps1)      # PreToolUse: block dangerous commands
 │   └── lib/
-│       └── detect-stack.sh        # Auto-detect project type + commands
+│       └── detect-stack.sh (.ps1) # Auto-detect project type + commands + PATH
 ├── config/
 │   └── review-agent-hook.json     # Stop agent hook config (review check)
 ├── install.sh                     # Installer (merges with existing config)
 ├── uninstall.sh                   # Clean removal
 └── tests/
-    ├── test-detect-stack.sh       # Test stack detection
+    ├── test-detect-stack.sh       # Test stack detection + package managers
     ├── test-verify-task.sh        # Test task verification hook
     └── test-verify-stop.sh        # Test stop verification hook
 ```
@@ -75,9 +75,10 @@ claude-dev-stand-guard/
 
 **IMPORTANT:**
 - This installs into `~/.claude/` (the user's global config). Be surgical. Merge, don't overwrite.
-- The existing `post_tool_use.sh`, `bash-safety.sh`, and `task_detector.py` must not be replaced or broken.
+- The existing `task_detector.py` must not be replaced or broken.
 - Agent hooks use Sonnet. Prompt hooks use Sonnet. Both are acceptable per user preference.
-- All scripts must work on Linux and macOS.
+- All scripts must work on Linux, macOS, and Windows (via .ps1 equivalents).
+- Every .sh hook must have a .ps1 companion for claude-config-sync cross-platform sync.
 
 ## Cross-platform sync (claude-config-sync)
 
@@ -89,18 +90,13 @@ These hooks sync across machines via `claude-config-sync`, which manages `~/.cla
 - Hook commands are auto-adapted on pull: `bash script.sh` becomes `powershell script.ps1` on Windows (and reverse on Unix)
 - Home directory paths in settings.json are rewritten to the current machine's home
 
-**Windows support requires `.ps1` equivalents.** The sync tool assumes a `.ps1` file exists for every `.sh` file. To support Windows, provide:
-- `hooks/verify-task.ps1`
-- `hooks/verify-stop.ps1`
-- `hooks/lib/detect-stack.ps1`
-
-Without these, hooks sync to Windows but silently fail (the `.ps1` files don't exist). Linux and macOS work regardless.
+**Windows support:** All hooks have `.ps1` equivalents. The sync tool rewrites `bash script.sh` to `powershell script.ps1` on Windows automatically.
 
 ## Supported stacks (auto-detected)
 
 | Marker file | Stack | Test | Build | Lint |
 |---|---|---|---|---|
-| `package.json` | Node/TS | `npm run test` | `npm run build` | `npm run lint` |
+| `package.json` | Node/TS | `{mgr} test` | `{mgr} build` | `{mgr} lint` |
 | `pyproject.toml` / `requirements.txt` | Python | `pytest` | skip | `ruff check .` |
 | `Cargo.toml` | Rust | `cargo test` | `cargo build` | `cargo clippy` |
 | `go.mod` | Go | `go test ./...` | `go build ./...` | `go vet ./...` |
@@ -108,6 +104,8 @@ Without these, hooks sync to Windows but silently fail (the `.ps1` files don't e
 | `Package.swift` | Swift | `swift test` | `swift build` | `swiftlint` |
 
 Commands only set if the tool is actually installed and (for Node) the script exists in package.json.
+
+Node package manager is auto-detected from lockfile: `pnpm-lock.yaml` -> pnpm, `yarn.lock` -> yarn, `bun.lockb` -> bun, `package-lock.json` or none -> npm. Falls back to npm if detected manager isn't installed.
 
 ## Commands
 ```bash

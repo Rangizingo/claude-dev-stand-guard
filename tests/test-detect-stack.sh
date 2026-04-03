@@ -97,7 +97,7 @@ assert_empty "Empty dir: no BUILD_CMD" "$BUILD_CMD"
 assert_empty "Empty dir: no LINT_CMD" "$LINT_CMD"
 
 # --------------------------------------------------------------------------
-# Test 2: Node/TS project with all scripts in package.json
+# Test 2: Node/TS project with all scripts (npm via package-lock.json)
 # --------------------------------------------------------------------------
 DIR="$TMPBASE/node-full"
 mkdir -p "$DIR"
@@ -110,6 +110,7 @@ cat > "$DIR/package.json" <<'PJSON'
   }
 }
 PJSON
+touch "$DIR/package-lock.json"
 OUTPUT="$(run_detect "$DIR")"
 parse_detect "$OUTPUT"
 assert_eq "Node full: stack detected" "node" "$DETECTED_STACK"
@@ -137,6 +138,7 @@ cat > "$DIR/package.json" <<'PJSON'
   }
 }
 PJSON
+touch "$DIR/package-lock.json"
 OUTPUT="$(run_detect "$DIR")"
 parse_detect "$OUTPUT"
 assert_eq "Node no-test: stack detected" "node" "$DETECTED_STACK"
@@ -370,6 +372,95 @@ assert_eq "Node no scripts key: stack detected" "node" "$DETECTED_STACK"
 assert_empty "Node no scripts key: no TEST_CMD" "$TEST_CMD"
 assert_empty "Node no scripts key: no BUILD_CMD" "$BUILD_CMD"
 assert_empty "Node no scripts key: no LINT_CMD" "$LINT_CMD"
+
+# --------------------------------------------------------------------------
+# Test 17: pnpm project (pnpm-lock.yaml)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-pnpm"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": { "test": "vitest", "build": "tsc", "lint": "eslint ." }
+}
+PJSON
+touch "$DIR/pnpm-lock.yaml"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "pnpm: stack detected" "node" "$DETECTED_STACK"
+if command -v pnpm &>/dev/null; then
+    assert_eq "pnpm: TEST_CMD" "pnpm test" "$TEST_CMD"
+    assert_eq "pnpm: BUILD_CMD" "pnpm build" "$BUILD_CMD"
+    assert_eq "pnpm: LINT_CMD" "pnpm lint" "$LINT_CMD"
+elif command -v npm &>/dev/null; then
+    # Falls back to npm if pnpm not installed
+    assert_eq "pnpm fallback: TEST_CMD" "npm run test" "$TEST_CMD"
+else
+    assert_empty "pnpm (no mgr): TEST_CMD empty" "$TEST_CMD"
+fi
+
+# --------------------------------------------------------------------------
+# Test 18: yarn project (yarn.lock)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-yarn"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": { "test": "jest", "build": "webpack" }
+}
+PJSON
+touch "$DIR/yarn.lock"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "yarn: stack detected" "node" "$DETECTED_STACK"
+if command -v yarn &>/dev/null; then
+    assert_eq "yarn: TEST_CMD" "yarn test" "$TEST_CMD"
+    assert_eq "yarn: BUILD_CMD" "yarn build" "$BUILD_CMD"
+elif command -v npm &>/dev/null; then
+    assert_eq "yarn fallback: TEST_CMD" "npm run test" "$TEST_CMD"
+else
+    assert_empty "yarn (no mgr): TEST_CMD empty" "$TEST_CMD"
+fi
+
+# --------------------------------------------------------------------------
+# Test 19: bun project (bun.lockb)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-bun"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": { "test": "bun test", "build": "bun build" }
+}
+PJSON
+touch "$DIR/bun.lockb"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "bun: stack detected" "node" "$DETECTED_STACK"
+if command -v bun &>/dev/null; then
+    assert_eq "bun: TEST_CMD" "bun run test" "$TEST_CMD"
+    assert_eq "bun: BUILD_CMD" "bun run build" "$BUILD_CMD"
+elif command -v npm &>/dev/null; then
+    assert_eq "bun fallback: TEST_CMD" "npm run test" "$TEST_CMD"
+else
+    assert_empty "bun (no mgr): TEST_CMD empty" "$TEST_CMD"
+fi
+
+# --------------------------------------------------------------------------
+# Test 20: No lockfile defaults to npm
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/node-no-lock"
+mkdir -p "$DIR"
+cat > "$DIR/package.json" <<'PJSON'
+{
+  "scripts": { "test": "jest" }
+}
+PJSON
+# No lockfile at all
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "No lockfile: stack detected" "node" "$DETECTED_STACK"
+if command -v npm &>/dev/null; then
+    assert_eq "No lockfile: defaults to npm" "npm run test" "$TEST_CMD"
+fi
 
 # --------------------------------------------------------------------------
 # Results
