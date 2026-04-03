@@ -195,6 +195,114 @@ function _DetectStack {
             return
         }
 
+        # Java/Kotlin (Gradle — check .kts first for Kotlin DSL)
+        if ((Test-Path "$dir\build.gradle.kts" -PathType Leaf) -or
+            (Test-Path "$dir\build.gradle"     -PathType Leaf)) {
+            $script:DETECTED_STACK = "gradle"
+            $script:SOURCE_PATTERN = '\.(java|kt|kts)$'
+            if (Test-Path "$dir\gradlew.bat" -PathType Leaf) {
+                $script:TEST_CMD  = ".\gradlew.bat test"
+                $script:BUILD_CMD = ".\gradlew.bat build"
+            } elseif (Test-Path "$dir\gradlew" -PathType Leaf) {
+                $script:TEST_CMD  = "./gradlew test"
+                $script:BUILD_CMD = "./gradlew build"
+            } elseif (_HasCmd "gradle") {
+                $script:TEST_CMD  = "gradle test"
+                $script:BUILD_CMD = "gradle build"
+            }
+            $script:LINT_CMD = ""
+            return
+        }
+
+        # Java (Maven)
+        if (Test-Path "$dir\pom.xml" -PathType Leaf) {
+            $script:DETECTED_STACK = "maven"
+            $script:SOURCE_PATTERN = '\.java$'
+            if (_HasCmd "mvn") {
+                $script:TEST_CMD  = "mvn test"
+                $script:BUILD_CMD = "mvn compile"
+            }
+            $script:LINT_CMD = ""
+            return
+        }
+
+        # Ruby
+        if (Test-Path "$dir\Gemfile" -PathType Leaf) {
+            $script:DETECTED_STACK = "ruby"
+            $script:SOURCE_PATTERN = '\.rb$'
+            if (_HasCmd "bundle") { $script:TEST_CMD = "bundle exec rspec" }
+            $script:BUILD_CMD = ""
+            if (_HasCmd "rubocop") { $script:LINT_CMD = "rubocop" }
+            return
+        }
+
+        # PHP
+        if (Test-Path "$dir\composer.json" -PathType Leaf) {
+            $script:DETECTED_STACK = "php"
+            $script:SOURCE_PATTERN = '\.php$'
+            if (Test-Path "$dir\vendor\bin\phpunit" -PathType Leaf) {
+                $script:TEST_CMD = ".\vendor\bin\phpunit"
+            }
+            $script:BUILD_CMD = ""
+            if (Test-Path "$dir\vendor\bin\phpcs" -PathType Leaf) {
+                $script:LINT_CMD = ".\vendor\bin\phpcs"
+            }
+            return
+        }
+
+        # Dart/Flutter
+        if (Test-Path "$dir\pubspec.yaml" -PathType Leaf) {
+            $script:DETECTED_STACK = "dart"
+            $script:SOURCE_PATTERN = '\.dart$'
+            if (_HasCmd "flutter") {
+                $script:TEST_CMD  = "flutter test"
+                $script:BUILD_CMD = "flutter build"
+                $script:LINT_CMD  = "dart analyze"
+            } elseif (_HasCmd "dart") {
+                $script:TEST_CMD  = "dart test"
+                $script:BUILD_CMD = ""
+                $script:LINT_CMD  = "dart analyze"
+            }
+            return
+        }
+
+        # Elixir
+        if (Test-Path "$dir\mix.exs" -PathType Leaf) {
+            $script:DETECTED_STACK = "elixir"
+            $script:SOURCE_PATTERN = '\.(ex|exs)$'
+            if (_HasCmd "mix") {
+                $script:TEST_CMD  = "mix test"
+                $script:BUILD_CMD = "mix compile"
+                $script:LINT_CMD  = "mix credo"
+            }
+            return
+        }
+
+        # C/C++ (CMake first, then Makefile)
+        if (Test-Path "$dir\CMakeLists.txt" -PathType Leaf) {
+            $script:DETECTED_STACK = "cmake"
+            $script:SOURCE_PATTERN = '\.(c|cpp|cc|cxx|h|hpp)$'
+            if (_HasCmd "cmake") {
+                $script:BUILD_CMD = "cmake --build build"
+                $script:TEST_CMD  = "ctest --test-dir build"
+            }
+            $script:LINT_CMD = ""
+            if (_HasCmd "cppcheck") { $script:LINT_CMD = "cppcheck --enable=warning,style ." }
+            return
+        }
+
+        if (Test-Path "$dir\Makefile" -PathType Leaf) {
+            $script:DETECTED_STACK = "make"
+            $script:SOURCE_PATTERN = '\.(c|cpp|cc|cxx|h|hpp)$'
+            if (_HasCmd "make") {
+                $script:BUILD_CMD = "make"
+                $script:TEST_CMD  = "make test"
+            }
+            $script:LINT_CMD = ""
+            if (_HasCmd "cppcheck") { $script:LINT_CMD = "cppcheck --enable=warning,style ." }
+            return
+        }
+
         # Walk up
         $parent = Split-Path $dir -Parent
         if ([string]::IsNullOrEmpty($parent) -or $parent -eq $dir) {
