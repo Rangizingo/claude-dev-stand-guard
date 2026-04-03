@@ -48,10 +48,10 @@ if ($LINES_CHANGED -lt 20) {
 # Substantial source changes. Check for review evidence.
 $TODAY = (Get-Date).ToString('yyyy-MM-dd')
 
-# Check for qa-report modified today
-if (Test-Path '.claude/qa-report.md') {
-    $REPORT_DATE = (Get-Item '.claude/qa-report.md').LastWriteTime.ToString('yyyy-MM-dd')
-    if ($REPORT_DATE -eq $TODAY) {
+# Check for any qa-report file modified today
+$reports = Get-ChildItem -Path '.claude' -Filter 'qa-report*.md' -ErrorAction SilentlyContinue
+foreach ($report in $reports) {
+    if ($report.LastWriteTime.ToString('yyyy-MM-dd') -eq $TODAY) {
         exit 0
     }
 }

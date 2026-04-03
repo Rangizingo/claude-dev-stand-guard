@@ -37,13 +37,15 @@ fi
 # Substantial source changes. Check for review evidence.
 TODAY="$(date +%Y-%m-%d)"
 
-# Check for qa-report
-if [[ -f ".claude/qa-report.md" ]]; then
-    REPORT_DATE="$(date -r ".claude/qa-report.md" +%Y-%m-%d 2>/dev/null || echo "")"
-    if [[ "${REPORT_DATE}" == "${TODAY}" ]]; then
-        exit 0
+# Check for any qa-report file modified today
+for REPORT in .claude/qa-report*.md; do
+    if [[ -f "${REPORT}" ]]; then
+        REPORT_DATE="$(date -r "${REPORT}" +%Y-%m-%d 2>/dev/null || echo "")"
+        if [[ "${REPORT_DATE}" == "${TODAY}" ]]; then
+            exit 0
+        fi
     fi
-fi
+done
 
 # Check git log for review mentions
 if git log --oneline -5 2>/dev/null | grep -qiE 'review|qa'; then
