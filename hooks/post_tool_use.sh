@@ -32,7 +32,7 @@ if [[ -z "${FILE_PATH}" || ! -f "${FILE_PATH}" ]]; then
 fi
 
 EXT="${FILE_PATH##*.}"
-EXT="${EXT,,}"
+EXT="$(printf '%s' "$EXT" | tr '[:upper:]' '[:lower:]')"
 
 ERRORS=""
 
