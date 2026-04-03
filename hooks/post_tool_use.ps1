@@ -89,6 +89,28 @@ switch ($EXT) {
                 Pop-Location
             }
         }
+        # Typecheck (turbo cached, fast after first run)
+        if (-not $ERRORS -and (Test-Path "$PROJECT_DIR/package.json")) {
+            . (Join-Path $PSScriptRoot "lib\detect-stack.ps1")
+            $pkgJson = Get-Content "$PROJECT_DIR/package.json" -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($pkgJson -and $pkgJson.scripts -and $pkgJson.scripts.PSObject.Properties.Name -contains 'typecheck') {
+                $mgr = _DetectNodePkgManager $PROJECT_DIR
+                if (-not (_HasCmd $mgr)) { $mgr = "npm" }
+                if (_HasCmd $mgr) {
+                    Push-Location $PROJECT_DIR
+                    try {
+                        $tc_out = & $mgr run typecheck 2>&1 | Out-String
+                        if ($LASTEXITCODE -ne 0) {
+                            $tc_errors = ($tc_out -split "`n" | Where-Object { $_ -match 'error TS' } | Select-Object -First 10) -join "`n"
+                            $file_name = [System.IO.Path]::GetFileName($FILE_PATH)
+                            $ERRORS = "TypeScript errors after editing ${file_name}:`n${tc_errors}"
+                        }
+                    } finally {
+                        Pop-Location
+                    }
+                }
+            }
+        }
     }
 
     'json' {
@@ -145,7 +167,20 @@ switch ($EXT) {
         } elseif (Get-Command gofmt -ErrorAction SilentlyContinue) {
             gofmt -w $FILE_PATH 2>$null
         }
-        # No per-file lint — go vet ./... is too slow per-edit, handled by verify-stop.ps1
+        # Vet (Go's build cache makes this fast after first run)
+        if ((Get-Command go -ErrorAction SilentlyContinue) -and (Test-Path "$PROJECT_DIR/go.mod")) {
+            Push-Location $PROJECT_DIR
+            try {
+                $vet_out = go vet ./... 2>&1 | Out-String
+                if ($LASTEXITCODE -ne 0) {
+                    $vet_errors = ($vet_out -split "`n" | Select-Object -First 10) -join "`n"
+                    $file_name = [System.IO.Path]::GetFileName($FILE_PATH)
+                    $ERRORS = "go vet errors after editing ${file_name}:`n${vet_errors}"
+                }
+            } finally {
+                Pop-Location
+            }
+        }
     }
 
     'swift' {
@@ -153,7 +188,15 @@ switch ($EXT) {
         if (Get-Command swiftformat -ErrorAction SilentlyContinue) {
             swiftformat $FILE_PATH 2>$null
         }
-        # No per-file swiftlint — runs at stop time via verify-stop.ps1
+        # Lint with feedback
+        if (Get-Command swiftlint -ErrorAction SilentlyContinue) {
+            $sl_out = swiftlint lint --path $FILE_PATH --quiet 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                $sl_errors = ($sl_out -split "`n" | Select-Object -First 10) -join "`n"
+                $file_name = [System.IO.Path]::GetFileName($FILE_PATH)
+                $ERRORS = "SwiftLint errors in ${file_name}:`n${sl_errors}"
+            }
+        }
     }
 }
 

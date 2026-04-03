@@ -10,11 +10,11 @@
 #
 # Formatters (silently skipped if not installed):
 #   .py                      → black + ruff check
-#   .js .ts .jsx .tsx .json  → prettier --write + eslint (if config exists)
-#   .cs                      → dotnet format whitespace
+#   .js .ts .jsx .tsx .json  → prettier --write + eslint + typecheck (turbo cached)
+#   .cs                      → dotnet format whitespace + dotnet build
 #   .rs                      → rustfmt + cargo check
-#   .go                      → goimports or gofmt
-#   .swift                   → swiftformat
+#   .go                      → goimports or gofmt + go vet
+#   .swift                   → swiftformat + swiftlint
 
 set -uo pipefail
 
@@ -65,6 +65,21 @@ case "${EXT}" in
         if [[ -f "${PROJECT_DIR}/node_modules/.bin/eslint" ]]; then
             LINT_OUT="$(cd "${PROJECT_DIR}" && npx eslint "${FILE_PATH}" 2>&1)" || ERRORS="ESLint errors in $(basename "${FILE_PATH}"):\n${LINT_OUT}"
         fi
+        # Typecheck (turbo cached, fast after first run)
+        if [[ -z "${ERRORS}" && -f "${PROJECT_DIR}/package.json" ]]; then
+            SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            source "$SCRIPT_DIR/lib/detect-stack.sh"
+            if _has_npm_script "${PROJECT_DIR}/package.json" "typecheck"; then
+                local_mgr="$(_detect_node_pkg_manager "${PROJECT_DIR}")"
+                _has_cmd "$local_mgr" || local_mgr="npm"
+                if _has_cmd "$local_mgr"; then
+                    TC_OUT="$(cd "${PROJECT_DIR}" && $local_mgr run typecheck 2>&1)" || {
+                        TC_ERRORS="$(echo "${TC_OUT}" | grep 'error TS' | head -10)"
+                        ERRORS="TypeScript errors after editing $(basename "${FILE_PATH}"):\n${TC_ERRORS}"
+                    }
+                fi
+            fi
+        fi
         ;;
     json)
         # Format only, no lint
@@ -101,12 +116,24 @@ case "${EXT}" in
         elif command -v gofmt &>/dev/null; then
             gofmt -w "${FILE_PATH}" 2>/dev/null || true
         fi
-        # No per-file lint: go vet ./... is too slow per-edit, handled by verify-stop.sh
+        # Vet (Go's build cache makes this fast after first run)
+        if command -v go &>/dev/null && [[ -f "${PROJECT_DIR}/go.mod" ]]; then
+            VET_OUT="$(cd "${PROJECT_DIR}" && go vet ./... 2>&1)" || {
+                VET_ERRORS="$(echo "${VET_OUT}" | head -10)"
+                ERRORS="go vet errors after editing $(basename "${FILE_PATH}"):\n${VET_ERRORS}"
+            }
+        fi
         ;;
     swift)
         # Format
         command -v swiftformat &>/dev/null && swiftformat "${FILE_PATH}" 2>/dev/null || true
-        # No per-file swiftlint: runs at stop time via verify-stop.sh
+        # Lint with feedback
+        if command -v swiftlint &>/dev/null; then
+            SL_OUT="$(swiftlint lint --path "${FILE_PATH}" --quiet 2>&1)" || {
+                SL_ERRORS="$(echo "${SL_OUT}" | head -10)"
+                ERRORS="SwiftLint errors in $(basename "${FILE_PATH}"):\n${SL_ERRORS}"
+            }
+        fi
         ;;
 esac
 
