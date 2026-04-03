@@ -51,16 +51,18 @@ NEED_STOP=false
 NEED_STOP_REVIEW=false
 NEED_POST_TOOL_USE=false
 NEED_BASH_SAFETY=false
+NEED_POST_COMPACT=false
 
 _has_hook "TaskCompleted" "verify-task" || NEED_TASK=true
 _has_hook "Stop" "verify-stop" || NEED_STOP=true
 _has_hook "Stop" "review-gate" || NEED_STOP_REVIEW=true
 _has_hook "PostToolUse" "post_tool_use" || NEED_POST_TOOL_USE=true
 _has_hook "PreToolUse" "bash-safety" || NEED_BASH_SAFETY=true
+_has_hook "SessionStart" "post-compact" || NEED_POST_COMPACT=true
 
 if [ "$NEED_TASK" = false ] && [ "$NEED_STOP" = false ] && \
    [ "$NEED_STOP_REVIEW" = false ] && [ "$NEED_POST_TOOL_USE" = false ] && \
-   [ "$NEED_BASH_SAFETY" = false ]; then
+   [ "$NEED_BASH_SAFETY" = false ] && [ "$NEED_POST_COMPACT" = false ]; then
     echo "stand-guard hooks are already installed. All hooks present."
     exit 0
 fi
@@ -125,6 +127,16 @@ BASH_SAFETY_HOOK='{
   }]
 }'
 
+POST_COMPACT_HOOK='{
+  "matcher": "compact",
+  "hooks": [{
+    "type": "command",
+    "command": "bash \"$HOME/.claude/hooks/post-compact.sh\"",
+    "timeout": 10,
+    "statusMessage": "stand-guard: restoring context"
+  }]
+}'
+
 # --- Build jq merge expression ---
 
 JQ_EXPR="."
@@ -151,6 +163,10 @@ if [ "$NEED_BASH_SAFETY" = true ]; then
     JQ_EXPR="$JQ_EXPR | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [\$bs_hook])"
 fi
 
+if [ "$NEED_POST_COMPACT" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.SessionStart = ((.hooks.SessionStart // []) + [\$compact_hook])"
+fi
+
 # --- Apply merge ---
 
 NEW_SETTINGS="$(jq \
@@ -159,6 +175,7 @@ NEW_SETTINGS="$(jq \
     --argjson stop_review_hook "$STOP_REVIEW_HOOK" \
     --argjson ptu_hook "$POST_TOOL_USE_HOOK" \
     --argjson bs_hook "$BASH_SAFETY_HOOK" \
+    --argjson compact_hook "$POST_COMPACT_HOOK" \
     "$JQ_EXPR" \
     "$SETTINGS")"
 
@@ -170,10 +187,11 @@ if [ "$DRY_RUN" = true ]; then
     [ "$NEED_STOP_REVIEW" = true ] && echo "  hooks.Stop -> review-gate.sh"
     [ "$NEED_POST_TOOL_USE" = true ] && echo "  hooks.PostToolUse -> post_tool_use.sh"
     [ "$NEED_BASH_SAFETY" = true ] && echo "  hooks.PreToolUse -> bash-safety.sh"
+    [ "$NEED_POST_COMPACT" = true ] && echo "  hooks.SessionStart -> post-compact.sh (compact)"
     echo ""
     echo "[DRY RUN] Files to copy:"
     echo "  hooks/verify-task.sh, verify-stop.sh, review-gate.sh"
-    echo "  hooks/post_tool_use.sh, bash-safety.sh"
+    echo "  hooks/post_tool_use.sh, bash-safety.sh, post-compact.sh"
     echo "  hooks/lib/detect-stack.sh"
     echo "  + .ps1 equivalents for all above"
     echo ""
@@ -192,7 +210,7 @@ echo "Updated: $SETTINGS"
 mkdir -p "$LIB_DIR"
 
 # Bash hooks
-for src in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh; do
+for src in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
     cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
     chmod +x "$HOOKS_DIR/$src"
     echo "Installed: $HOOKS_DIR/$src"
@@ -203,7 +221,7 @@ chmod +x "$LIB_DIR/detect-stack.sh"
 echo "Installed: $LIB_DIR/detect-stack.sh"
 
 # PowerShell hooks (for Windows via claude-config-sync)
-for src in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1; do
+for src in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
     if [ -f "$SCRIPT_DIR/hooks/$src" ]; then
         cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
         echo "Installed: $HOOKS_DIR/$src"
@@ -226,6 +244,7 @@ echo "Hooks added:"
 [ "$NEED_STOP_REVIEW" = true ] && echo "  Stop -> review-gate.sh (blocks if substantial changes lack code review)"
 [ "$NEED_POST_TOOL_USE" = true ] && echo "  PostToolUse -> post_tool_use.sh (auto-format + lint on every edit)"
 [ "$NEED_BASH_SAFETY" = true ] && echo "  PreToolUse -> bash-safety.sh (blocks dangerous bash commands)"
+[ "$NEED_POST_COMPACT" = true ] && echo "  SessionStart -> post-compact.sh (restores context after compaction)"
 echo ""
 echo "To verify: restart Claude Code and check /hooks"
 echo "To remove: bash $SCRIPT_DIR/uninstall.sh"

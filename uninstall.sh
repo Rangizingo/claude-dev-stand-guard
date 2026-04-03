@@ -27,7 +27,8 @@ _has_any_hook() {
         (.hooks.TaskCompleted // [] | map(.hooks // [] | map(.command // "" | test("verify-task")) | any) | any) or
         (.hooks.Stop // [] | map(.hooks // [] | map(.command // "" | test("verify-stop|review-gate")) | any) | any) or
         (.hooks.PostToolUse // [] | map(.hooks // [] | map(.command // "" | test("post_tool_use")) | any) | any) or
-        (.hooks.PreToolUse // [] | map(.hooks // [] | map(.command // "" | test("bash-safety")) | any) | any)
+        (.hooks.PreToolUse // [] | map(.hooks // [] | map(.command // "" | test("bash-safety")) | any) | any) or
+        (.hooks.SessionStart // [] | map(.hooks // [] | map(.command // "" | test("post-compact")) | any) | any)
     ' "$SETTINGS" >/dev/null 2>&1
 }
 
@@ -91,6 +92,15 @@ NEW_SETTINGS="$(jq '
         ] |
         if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
       else . end
+
+    # SessionStart: remove post-compact entries (preserve claude-config-sync)
+    | if .hooks.SessionStart then
+        .hooks.SessionStart = [
+            .hooks.SessionStart[] |
+            select(.hooks // [] | map(.command // "" | test("post-compact")) | any | not)
+        ] |
+        if (.hooks.SessionStart | length) == 0 then del(.hooks.SessionStart) else . end
+      else . end
 ' "$SETTINGS")"
 
 echo "$NEW_SETTINGS" | jq . > "$SETTINGS"
@@ -101,7 +111,7 @@ echo "Updated: $SETTINGS"
 REMOVED=0
 
 # Bash hooks
-for f in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh; do
+for f in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
     if [ -f "$HOOKS_DIR/$f" ]; then
         rm "$HOOKS_DIR/$f"
         echo "Removed: $HOOKS_DIR/$f"
@@ -110,7 +120,7 @@ for f in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safe
 done
 
 # PowerShell hooks
-for f in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1; do
+for f in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
     if [ -f "$HOOKS_DIR/$f" ]; then
         rm "$HOOKS_DIR/$f"
         echo "Removed: $HOOKS_DIR/$f"
