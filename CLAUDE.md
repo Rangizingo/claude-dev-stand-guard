@@ -22,12 +22,13 @@ ADVISORY (already built, tells Claude what to do)
 └── hooks/task_detector.py     "Auto-inject protocol on implementation prompts"
 
 ENFORCEMENT (this project, makes it impossible to skip)
-├── hooks/lib/detect-stack.sh  Auto-detect test/build/lint for any stack (+ PATH augmentation)
+├── hooks/lib/detect-stack.sh  Auto-detect test/build/lint for 12 stacks (+ PATH augmentation)
 ├── hooks/verify-task.sh       TaskCompleted: block if tests fail or new code has no tests
 ├── hooks/verify-stop.sh       Stop: block if lint/test/build fail
 ├── hooks/review-gate.sh       Stop: block if substantial changes lack code review
-├── hooks/post_tool_use.sh     PostToolUse: format + lint every file edit
+├── hooks/post_tool_use.sh     PostToolUse: format + typecheck + lint every file edit
 ├── hooks/bash-safety.sh       PreToolUse: block destructive bash commands
+├── hooks/post-compact.sh      SessionStart (compact): restore context after compaction
 └── hooks/*.ps1                Windows equivalents (synced via claude-config-sync)
 ```
 
@@ -48,18 +49,21 @@ claude-dev-stand-guard/
 │   ├── verify-task.sh (.ps1)      # TaskCompleted: run tests + check test files exist
 │   ├── verify-stop.sh (.ps1)      # Stop: full lint + test + build gate
 │   ├── review-gate.sh (.ps1)      # Stop: block without code review
-│   ├── post_tool_use.sh (.ps1)    # PostToolUse: auto-format + lint on edit
+│   ├── post_tool_use.sh (.ps1)    # PostToolUse: format + typecheck + lint on edit
 │   ├── bash-safety.sh (.ps1)      # PreToolUse: block dangerous commands
+│   ├── post-compact.sh (.ps1)     # SessionStart: restore context after compaction
 │   └── lib/
-│       └── detect-stack.sh (.ps1) # Auto-detect project type + commands + PATH
+│       └── detect-stack.sh (.ps1) # Auto-detect 12 stacks + commands + PATH
 ├── config/
-│   └── review-agent-hook.json     # Stop agent hook config (review check)
-├── install.sh                     # Installer (merges with existing config)
-├── uninstall.sh                   # Clean removal
+│   └── review-agent-hook.json     # Legacy agent hook config (superseded by review-gate.sh)
+├── install.sh                     # Installer (merges with existing config, per-hook idempotent)
+├── uninstall.sh                   # Clean removal (all hook types + .ps1 files)
 └── tests/
-    ├── test-detect-stack.sh       # Test stack detection + package managers
-    ├── test-verify-task.sh        # Test task verification hook
-    └── test-verify-stop.sh        # Test stop verification hook
+    ├── test-detect-stack.sh       # Stack detection + package managers (82 tests)
+    ├── test-verify-task.sh        # Task verification hook (13 tests)
+    ├── test-verify-stop.sh        # Stop verification hook (17 tests)
+    ├── test-post-tool-use.sh      # Per-edit format/typecheck/lint, all languages (33 tests)
+    └── test-all-hooks.sh          # End-to-end installed hooks + settings integrity (61 tests)
 ```
 
 ## Key Rules
@@ -94,14 +98,22 @@ These hooks sync across machines via `claude-config-sync`, which manages `~/.cla
 
 ## Supported stacks (auto-detected)
 
-| Marker file | Stack | Test | Build | Lint |
-|---|---|---|---|---|
-| `package.json` | Node/TS | `{mgr} test` | `{mgr} build` | `{mgr} lint` |
-| `pyproject.toml` / `requirements.txt` | Python | `pytest` | skip | `ruff check .` |
-| `Cargo.toml` | Rust | `cargo test` | `cargo build` | `cargo clippy` |
-| `go.mod` | Go | `go test ./...` | `go build ./...` | `go vet ./...` |
-| `*.csproj` | .NET | `dotnet test` | `dotnet build` | skip |
-| `Package.swift` | Swift | `swift test` | `swift build` | `swiftlint` |
+| Marker file | Stack | Test | Build | Lint | Edit-time |
+|---|---|---|---|---|---|
+| `package.json` | Node/TS | `{mgr} test` | `{mgr} build` | `{mgr} lint` | prettier + eslint + typecheck |
+| `pyproject.toml` / `requirements.txt` | Python | `pytest` | skip | `ruff check .` | black + ruff |
+| `Cargo.toml` | Rust | `cargo test` | `cargo build` | `cargo clippy` | rustfmt + cargo check |
+| `go.mod` | Go | `go test ./...` | `go build ./...` | `go vet ./...` | goimports/gofmt + go vet |
+| `*.csproj` | .NET | `dotnet test` | `dotnet build` | skip | dotnet format + build |
+| `Package.swift` | Swift | `swift test` | `swift build` | `swiftlint` | swiftformat + swiftlint |
+| `build.gradle(.kts)` | Gradle | `./gradlew test` | `./gradlew build` | skip | google-java-format/ktlint + compile |
+| `pom.xml` | Maven | `mvn test` | `mvn compile` | skip | google-java-format + compile |
+| `Gemfile` | Ruby | `bundle exec rspec` | skip | `rubocop` | rubocop (format + lint) |
+| `composer.json` | PHP | `./vendor/bin/phpunit` | skip | `./vendor/bin/phpcs` | php-cs-fixer + php -l |
+| `pubspec.yaml` | Dart/Flutter | `dart test` | `flutter build` | `dart analyze` | dart format + analyze |
+| `mix.exs` | Elixir | `mix test` | `mix compile` | `mix credo` | mix format + compile |
+| `CMakeLists.txt` | CMake | `ctest` | `cmake --build` | `cppcheck` | clang-format + cppcheck |
+| `Makefile` | Make | `make test` | `make` | `cppcheck` | clang-format + cppcheck |
 
 Commands only set if the tool is actually installed and (for Node) the script exists in package.json.
 
@@ -109,13 +121,16 @@ Node package manager is auto-detected from lockfile: `pnpm-lock.yaml` -> pnpm, `
 
 ## Commands
 ```bash
-# Run tests
-bash tests/test-detect-stack.sh
-bash tests/test-verify-task.sh
-bash tests/test-verify-stop.sh
+# Run all tests (206 total)
+bash tests/test-detect-stack.sh      # Stack detection (82 tests)
+bash tests/test-verify-task.sh       # Task gate (13 tests)
+bash tests/test-verify-stop.sh       # Stop gate (17 tests)
+bash tests/test-post-tool-use.sh     # Edit-time hooks, all languages (33 tests)
+bash tests/test-all-hooks.sh         # End-to-end installed hooks (61 tests)
 
-# Install (merges into existing ~/.claude/ config)
+# Install (merges into existing ~/.claude/ config, idempotent)
 bash install.sh
+bash install.sh --dry-run
 
 # Uninstall (removes only what was added)
 bash uninstall.sh
