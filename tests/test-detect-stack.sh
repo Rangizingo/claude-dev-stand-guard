@@ -463,6 +463,116 @@ if command -v npm &>/dev/null; then
 fi
 
 # --------------------------------------------------------------------------
+# Test 21: Gradle project (build.gradle)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/gradle"
+mkdir -p "$DIR"
+echo 'apply plugin: "java"' > "$DIR/build.gradle"
+touch "$DIR/gradlew" && chmod +x "$DIR/gradlew"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Gradle: stack detected" "gradle" "$DETECTED_STACK"
+assert_not_empty "Gradle: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+assert_eq "Gradle: TEST_CMD via gradlew" "./gradlew test" "$TEST_CMD"
+assert_eq "Gradle: BUILD_CMD via gradlew" "./gradlew build" "$BUILD_CMD"
+
+# --------------------------------------------------------------------------
+# Test 22: Gradle Kotlin DSL (build.gradle.kts)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/gradle-kts"
+mkdir -p "$DIR"
+echo 'plugins { kotlin("jvm") }' > "$DIR/build.gradle.kts"
+touch "$DIR/gradlew" && chmod +x "$DIR/gradlew"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Gradle KTS: stack detected" "gradle" "$DETECTED_STACK"
+
+# --------------------------------------------------------------------------
+# Test 23: Maven project (pom.xml)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/maven"
+mkdir -p "$DIR"
+echo '<project></project>' > "$DIR/pom.xml"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Maven: stack detected" "maven" "$DETECTED_STACK"
+if command -v mvn &>/dev/null; then
+    assert_eq "Maven: TEST_CMD" "mvn test" "$TEST_CMD"
+    assert_eq "Maven: BUILD_CMD" "mvn compile" "$BUILD_CMD"
+else
+    assert_empty "Maven (no mvn): TEST_CMD empty" "$TEST_CMD"
+fi
+
+# --------------------------------------------------------------------------
+# Test 24: Ruby project (Gemfile)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/ruby"
+mkdir -p "$DIR"
+echo 'source "https://rubygems.org"' > "$DIR/Gemfile"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Ruby: stack detected" "ruby" "$DETECTED_STACK"
+assert_not_empty "Ruby: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 25: PHP project (composer.json)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/php"
+mkdir -p "$DIR"
+echo '{}' > "$DIR/composer.json"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "PHP: stack detected" "php" "$DETECTED_STACK"
+assert_not_empty "PHP: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 26: Dart/Flutter project (pubspec.yaml)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/dart"
+mkdir -p "$DIR"
+echo 'name: myapp' > "$DIR/pubspec.yaml"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Dart: stack detected" "dart" "$DETECTED_STACK"
+assert_not_empty "Dart: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 27: Elixir project (mix.exs)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/elixir"
+mkdir -p "$DIR"
+echo 'defmodule MyApp do end' > "$DIR/mix.exs"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Elixir: stack detected" "elixir" "$DETECTED_STACK"
+assert_not_empty "Elixir: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 28: CMake project (CMakeLists.txt)
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/cmake"
+mkdir -p "$DIR"
+echo 'cmake_minimum_required(VERSION 3.10)' > "$DIR/CMakeLists.txt"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "CMake: stack detected" "cmake" "$DETECTED_STACK"
+assert_not_empty "CMake: SOURCE_PATTERN set" "$SOURCE_PATTERN"
+
+# --------------------------------------------------------------------------
+# Test 29: Makefile project
+# --------------------------------------------------------------------------
+DIR="$TMPBASE/makefile"
+mkdir -p "$DIR"
+printf 'all:\n\techo build\ntest:\n\techo test\n' > "$DIR/Makefile"
+OUTPUT="$(run_detect "$DIR")"
+parse_detect "$OUTPUT"
+assert_eq "Makefile: stack detected" "make" "$DETECTED_STACK"
+if command -v make &>/dev/null; then
+    assert_eq "Makefile: BUILD_CMD" "make" "$BUILD_CMD"
+    assert_eq "Makefile: TEST_CMD" "make test" "$TEST_CMD"
+fi
+
+# --------------------------------------------------------------------------
 # Results
 # --------------------------------------------------------------------------
 printf "\n${YELLOW}=== Results ===${NC}\n"

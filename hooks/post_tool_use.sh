@@ -10,11 +10,18 @@
 #
 # Formatters (silently skipped if not installed):
 #   .py                      → black + ruff check
-#   .js .ts .jsx .tsx .json  → prettier --write + eslint + typecheck (turbo cached)
-#   .cs                      → dotnet format whitespace + dotnet build
+#   .js .ts .jsx .tsx .json  → prettier + eslint + typecheck (turbo cached)
+#   .cs                      → dotnet format + dotnet build
 #   .rs                      → rustfmt + cargo check
-#   .go                      → goimports or gofmt + go vet
+#   .go                      → goimports/gofmt + go vet
 #   .swift                   → swiftformat + swiftlint
+#   .java                    → google-java-format + gradle/maven compile
+#   .kt .kts                 → ktlint + gradle compileKotlin
+#   .rb                      → rubocop (format + lint)
+#   .php                     → php-cs-fixer + php -l
+#   .dart                    → dart format + dart analyze
+#   .ex .exs                 → mix format + mix compile
+#   .c .cpp .h .hpp          → clang-format + cppcheck
 
 set -uo pipefail
 
@@ -43,7 +50,16 @@ while [[ "${PROJECT_DIR}" != "/" && \
          ! -f "${PROJECT_DIR}/Cargo.toml" && \
          ! -f "${PROJECT_DIR}/pyproject.toml" && \
          ! -f "${PROJECT_DIR}/go.mod" && \
-         ! -f "${PROJECT_DIR}/Package.swift" ]]; do
+         ! -f "${PROJECT_DIR}/Package.swift" && \
+         ! -f "${PROJECT_DIR}/build.gradle" && \
+         ! -f "${PROJECT_DIR}/build.gradle.kts" && \
+         ! -f "${PROJECT_DIR}/pom.xml" && \
+         ! -f "${PROJECT_DIR}/Gemfile" && \
+         ! -f "${PROJECT_DIR}/composer.json" && \
+         ! -f "${PROJECT_DIR}/pubspec.yaml" && \
+         ! -f "${PROJECT_DIR}/mix.exs" && \
+         ! -f "${PROJECT_DIR}/CMakeLists.txt" && \
+         ! -f "${PROJECT_DIR}/Makefile" ]]; do
     PROJECT_DIR="$(dirname "${PROJECT_DIR}")"
 done
 
@@ -133,6 +149,100 @@ case "${EXT}" in
                 SL_ERRORS="$(echo "${SL_OUT}" | head -10)"
                 ERRORS="SwiftLint errors in $(basename "${FILE_PATH}"):\n${SL_ERRORS}"
             }
+        fi
+        ;;
+    java)
+        # Format
+        if command -v google-java-format &>/dev/null; then
+            google-java-format --replace "${FILE_PATH}" 2>/dev/null || true
+        fi
+        # Build check (Gradle or Maven, whichever is present)
+        if [[ -f "${PROJECT_DIR}/gradlew" ]]; then
+            BUILD_OUT="$(cd "${PROJECT_DIR}" && ./gradlew compileJava 2>&1)" || {
+                BUILD_ERRORS="$(echo "${BUILD_OUT}" | grep -E 'error:' | head -10)"
+                ERRORS="Build errors after editing $(basename "${FILE_PATH}"):\n${BUILD_ERRORS}"
+            }
+        elif [[ -f "${PROJECT_DIR}/pom.xml" ]] && command -v mvn &>/dev/null; then
+            BUILD_OUT="$(cd "${PROJECT_DIR}" && mvn compile -q 2>&1)" || {
+                BUILD_ERRORS="$(echo "${BUILD_OUT}" | grep -E 'ERROR|error:' | head -10)"
+                ERRORS="Build errors after editing $(basename "${FILE_PATH}"):\n${BUILD_ERRORS}"
+            }
+        fi
+        ;;
+    kt|kts)
+        # Format
+        if command -v ktlint &>/dev/null; then
+            ktlint --format "${FILE_PATH}" 2>/dev/null || true
+        fi
+        # Build check via Gradle
+        if [[ -f "${PROJECT_DIR}/gradlew" ]]; then
+            BUILD_OUT="$(cd "${PROJECT_DIR}" && ./gradlew compileKotlin 2>&1)" || {
+                BUILD_ERRORS="$(echo "${BUILD_OUT}" | grep -E 'error:' | head -10)"
+                ERRORS="Build errors after editing $(basename "${FILE_PATH}"):\n${BUILD_ERRORS}"
+            }
+        fi
+        ;;
+    rb)
+        # Format + lint (rubocop does both)
+        if command -v rubocop &>/dev/null; then
+            rubocop --autocorrect --force-exclusion "${FILE_PATH}" 2>/dev/null || true
+            LINT_OUT="$(rubocop --format simple "${FILE_PATH}" 2>&1)" || {
+                LINT_ERRORS="$(echo "${LINT_OUT}" | grep -E '^[^:]+:[0-9]+' | head -10)"
+                ERRORS="RuboCop errors in $(basename "${FILE_PATH}"):\n${LINT_ERRORS}"
+            }
+        fi
+        ;;
+    php)
+        # Format
+        if [[ -f "${PROJECT_DIR}/vendor/bin/php-cs-fixer" ]]; then
+            (cd "${PROJECT_DIR}" && ./vendor/bin/php-cs-fixer fix "${FILE_PATH}" --quiet 2>/dev/null) || true
+        fi
+        # Lint (syntax check, always available)
+        if command -v php &>/dev/null; then
+            LINT_OUT="$(php -l "${FILE_PATH}" 2>&1)" || {
+                ERRORS="PHP syntax errors in $(basename "${FILE_PATH}"):\n${LINT_OUT}"
+            }
+        fi
+        ;;
+    dart)
+        # Format
+        if command -v dart &>/dev/null; then
+            dart format "${FILE_PATH}" 2>/dev/null || true
+        fi
+        # Analyze with feedback
+        if command -v dart &>/dev/null; then
+            ANA_OUT="$(dart analyze "${FILE_PATH}" 2>&1)" || {
+                ANA_ERRORS="$(echo "${ANA_OUT}" | grep -E 'error|warning' | head -10)"
+                ERRORS="Dart analysis errors in $(basename "${FILE_PATH}"):\n${ANA_ERRORS}"
+            }
+        fi
+        ;;
+    ex|exs)
+        # Format
+        if command -v mix &>/dev/null && [[ -f "${PROJECT_DIR}/mix.exs" ]]; then
+            (cd "${PROJECT_DIR}" && mix format "${FILE_PATH}" 2>/dev/null) || true
+        fi
+        # Compile check
+        if command -v mix &>/dev/null && [[ -f "${PROJECT_DIR}/mix.exs" ]]; then
+            COMP_OUT="$(cd "${PROJECT_DIR}" && mix compile --warnings-as-errors 2>&1)" || {
+                COMP_ERRORS="$(echo "${COMP_OUT}" | grep -E 'error:' | head -10)"
+                ERRORS="Elixir compile errors after editing $(basename "${FILE_PATH}"):\n${COMP_ERRORS}"
+            }
+        fi
+        ;;
+    c|cpp|cc|cxx|h|hpp)
+        # Format
+        if command -v clang-format &>/dev/null; then
+            clang-format -i "${FILE_PATH}" 2>/dev/null || true
+        fi
+        # Lint
+        if command -v cppcheck &>/dev/null; then
+            CPP_OUT="$(cppcheck --enable=warning,style "${FILE_PATH}" 2>&1)" || true
+            # cppcheck writes to stderr even on success, check for actual errors
+            if echo "${CPP_OUT}" | grep -q 'error:'; then
+                CPP_ERRORS="$(echo "${CPP_OUT}" | grep 'error:' | head -10)"
+                ERRORS="cppcheck errors in $(basename "${FILE_PATH}"):\n${CPP_ERRORS}"
+            fi
         fi
         ;;
 esac

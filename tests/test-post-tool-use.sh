@@ -264,7 +264,127 @@ else
 fi
 
 # =========================================================================
-printf "\n${YELLOW}=== 8. Flux Integration ===${NC}\n\n"
+printf "\n${YELLOW}=== 8. Java ===${NC}\n\n"
+# =========================================================================
+
+JAVADIR="$TMPBASE/javaproject"
+mkdir -p "$JAVADIR/src"
+echo 'apply plugin: "java"' > "$JAVADIR/build.gradle"
+touch "$JAVADIR/gradlew" && chmod +x "$JAVADIR/gradlew"
+
+JAVAFILE="$JAVADIR/src/Main.java"
+echo 'public class Main { public static void main(String[] args) {} }' > "$JAVAFILE"
+OUTPUT="$(run_hook "Write" "$JAVAFILE")"
+assert_exit "Java clean: exit 0" 0 $?
+
+# =========================================================================
+printf "\n${YELLOW}=== 9. Kotlin ===${NC}\n\n"
+# =========================================================================
+
+KTDIR="$TMPBASE/kotlinproject"
+mkdir -p "$KTDIR/src"
+echo 'plugins { kotlin("jvm") }' > "$KTDIR/build.gradle.kts"
+touch "$KTDIR/gradlew" && chmod +x "$KTDIR/gradlew"
+
+KTFILE="$KTDIR/src/Main.kt"
+echo 'fun main() { println("hello") }' > "$KTFILE"
+OUTPUT="$(run_hook "Write" "$KTFILE")"
+assert_exit "Kotlin clean: exit 0" 0 $?
+
+# =========================================================================
+printf "\n${YELLOW}=== 10. Ruby ===${NC}\n\n"
+# =========================================================================
+
+RBDIR="$TMPBASE/rubyproject"
+mkdir -p "$RBDIR"
+echo 'source "https://rubygems.org"' > "$RBDIR/Gemfile"
+
+RBFILE="$RBDIR/app.rb"
+echo 'puts "hello"' > "$RBFILE"
+OUTPUT="$(run_hook "Write" "$RBFILE")"
+assert_exit "Ruby clean: exit 0" 0 $?
+
+# =========================================================================
+printf "\n${YELLOW}=== 11. PHP ===${NC}\n\n"
+# =========================================================================
+
+PHPDIR="$TMPBASE/phpproject"
+mkdir -p "$PHPDIR"
+echo '{}' > "$PHPDIR/composer.json"
+
+PHPFILE="$PHPDIR/index.php"
+echo '<?php echo "hello"; ?>' > "$PHPFILE"
+OUTPUT="$(run_hook "Write" "$PHPFILE")"
+assert_exit "PHP clean: exit 0" 0 $?
+
+# PHP syntax error (php -l always available on most systems)
+if command -v php &>/dev/null; then
+    PHPBAD="$PHPDIR/bad.php"
+    echo '<?php echo "missing semicolon" ?>' > "$PHPBAD"
+    # Note: this is actually valid PHP, so test with real syntax error
+    echo '<?php function( {}' > "$PHPBAD"
+    OUTPUT="$(run_hook "Write" "$PHPBAD")"
+    assert_exit "PHP syntax error: exit 0 (with block)" 0 $?
+    assert_output_contains "PHP syntax error: has block" "block" "$OUTPUT"
+else
+    printf "${DIM}SKIP${NC} php not installed\n"
+fi
+
+# =========================================================================
+printf "\n${YELLOW}=== 12. Dart ===${NC}\n\n"
+# =========================================================================
+
+DARTDIR="$TMPBASE/dartproject"
+mkdir -p "$DARTDIR"
+echo 'name: myapp' > "$DARTDIR/pubspec.yaml"
+
+DARTFILE="$DARTDIR/main.dart"
+echo 'void main() { print("hello"); }' > "$DARTFILE"
+OUTPUT="$(run_hook "Write" "$DARTFILE")"
+assert_exit "Dart clean: exit 0" 0 $?
+
+# =========================================================================
+printf "\n${YELLOW}=== 13. Elixir ===${NC}\n\n"
+# =========================================================================
+
+EXDIR="$TMPBASE/elixirproject"
+mkdir -p "$EXDIR"
+echo 'defmodule MyApp do end' > "$EXDIR/mix.exs"
+
+EXFILE="$EXDIR/app.ex"
+echo 'defmodule App do def hello, do: :world end' > "$EXFILE"
+OUTPUT="$(run_hook "Write" "$EXFILE")"
+assert_exit "Elixir clean: exit 0" 0 $?
+
+# =========================================================================
+printf "\n${YELLOW}=== 14. C/C++ ===${NC}\n\n"
+# =========================================================================
+
+CDIR="$TMPBASE/cproject"
+mkdir -p "$CDIR"
+echo 'cmake_minimum_required(VERSION 3.10)' > "$CDIR/CMakeLists.txt"
+
+CFILE="$CDIR/main.c"
+echo '#include <stdio.h>' > "$CFILE"
+echo 'int main() { return 0; }' >> "$CFILE"
+OUTPUT="$(run_hook "Write" "$CFILE")"
+assert_exit "C clean: exit 0" 0 $?
+
+CPPFILE="$CDIR/app.cpp"
+echo '#include <iostream>' > "$CPPFILE"
+echo 'int main() { return 0; }' >> "$CPPFILE"
+OUTPUT="$(run_hook "Write" "$CPPFILE")"
+assert_exit "C++ clean: exit 0" 0 $?
+
+HFILE="$CDIR/header.h"
+echo '#ifndef HEADER_H' > "$HFILE"
+echo '#define HEADER_H' >> "$HFILE"
+echo '#endif' >> "$HFILE"
+OUTPUT="$(run_hook "Write" "$HFILE")"
+assert_exit "Header .h: exit 0" 0 $?
+
+# =========================================================================
+printf "\n${YELLOW}=== 15. Flux Integration ===${NC}\n\n"
 # =========================================================================
 
 FLUX_DIR="/Users/peterb/Documents/AI/flux"

@@ -217,6 +217,122 @@ _detect_stack() {
             return 0
         fi
 
+        # Java/Kotlin (Gradle — check .kts first for Kotlin DSL)
+        if [ -f "$dir/build.gradle.kts" ] || [ -f "$dir/build.gradle" ]; then
+            DETECTED_STACK="gradle"
+            SOURCE_PATTERN='\.(java|kt|kts)$'
+            if [ -f "$dir/gradlew" ]; then
+                TEST_CMD="./gradlew test"
+                BUILD_CMD="./gradlew build"
+                # Gradle lint only if checkstyle/ktlint plugin is configured
+                LINT_CMD=""
+            elif _has_cmd gradle; then
+                TEST_CMD="gradle test"
+                BUILD_CMD="gradle build"
+                LINT_CMD=""
+            fi
+            return 0
+        fi
+
+        # Java (Maven)
+        if [ -f "$dir/pom.xml" ]; then
+            DETECTED_STACK="maven"
+            SOURCE_PATTERN='\.java$'
+            if _has_cmd mvn; then
+                TEST_CMD="mvn test"
+                BUILD_CMD="mvn compile"
+                LINT_CMD=""
+            fi
+            return 0
+        fi
+
+        # Ruby
+        if [ -f "$dir/Gemfile" ]; then
+            DETECTED_STACK="ruby"
+            SOURCE_PATTERN='\.rb$'
+            if _has_cmd bundle; then
+                TEST_CMD="bundle exec rspec"
+            fi
+            BUILD_CMD=""
+            if _has_cmd rubocop; then
+                LINT_CMD="rubocop"
+            fi
+            return 0
+        fi
+
+        # PHP
+        if [ -f "$dir/composer.json" ]; then
+            DETECTED_STACK="php"
+            SOURCE_PATTERN='\.php$'
+            if [ -f "$dir/vendor/bin/phpunit" ]; then
+                TEST_CMD="./vendor/bin/phpunit"
+            fi
+            BUILD_CMD=""
+            if [ -f "$dir/vendor/bin/phpcs" ]; then
+                LINT_CMD="./vendor/bin/phpcs"
+            fi
+            return 0
+        fi
+
+        # Dart/Flutter
+        if [ -f "$dir/pubspec.yaml" ]; then
+            DETECTED_STACK="dart"
+            SOURCE_PATTERN='\.dart$'
+            if _has_cmd flutter; then
+                TEST_CMD="flutter test"
+                BUILD_CMD="flutter build"
+                LINT_CMD="dart analyze"
+            elif _has_cmd dart; then
+                TEST_CMD="dart test"
+                BUILD_CMD=""
+                LINT_CMD="dart analyze"
+            fi
+            return 0
+        fi
+
+        # Elixir
+        if [ -f "$dir/mix.exs" ]; then
+            DETECTED_STACK="elixir"
+            SOURCE_PATTERN='\.(ex|exs)$'
+            if _has_cmd mix; then
+                TEST_CMD="mix test"
+                BUILD_CMD="mix compile"
+                if _has_cmd mix; then
+                    LINT_CMD="mix credo"
+                fi
+            fi
+            return 0
+        fi
+
+        # C/C++ (CMake first, then Makefile)
+        if [ -f "$dir/CMakeLists.txt" ]; then
+            DETECTED_STACK="cmake"
+            SOURCE_PATTERN='\.(c|cpp|cc|cxx|h|hpp)$'
+            if _has_cmd cmake; then
+                BUILD_CMD="cmake --build build"
+                TEST_CMD="ctest --test-dir build"
+            fi
+            LINT_CMD=""
+            if _has_cmd cppcheck; then
+                LINT_CMD="cppcheck --enable=warning,style ."
+            fi
+            return 0
+        fi
+
+        if [ -f "$dir/Makefile" ]; then
+            DETECTED_STACK="make"
+            SOURCE_PATTERN='\.(c|cpp|cc|cxx|h|hpp)$'
+            if _has_cmd make; then
+                BUILD_CMD="make"
+                TEST_CMD="make test"
+            fi
+            LINT_CMD=""
+            if _has_cmd cppcheck; then
+                LINT_CMD="cppcheck --enable=warning,style ."
+            fi
+            return 0
+        fi
+
         # Walk up
         local parent
         parent="$(dirname "$dir")"
