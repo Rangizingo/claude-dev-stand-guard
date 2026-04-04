@@ -24,7 +24,7 @@ fi
 
 _has_any_hook() {
     jq -e '
-        (.hooks.TaskCompleted // [] | map(.hooks // [] | map(.command // "" | test("verify-task")) | any) | any) or
+        (.hooks.TaskCompleted // [] | map(.hooks // [] | map(.command // "" | test("verify-task|plan-checkbox")) | any) | any) or
         (.hooks.Stop // [] | map(.hooks // [] | map(.command // "" | test("verify-stop|review-gate")) | any) | any) or
         (.hooks.PostToolUse // [] | map(.hooks // [] | map(.command // "" | test("post_tool_use")) | any) | any) or
         (.hooks.PreToolUse // [] | map(.hooks // [] | map(.command // "" | test("bash-safety")) | any) | any) or
@@ -48,11 +48,11 @@ echo "Backup: $BACKUP"
 
 # Remove our entries from each hook type, clean up empty arrays
 NEW_SETTINGS="$(jq '
-    # TaskCompleted: remove entries with verify-task
+    # TaskCompleted: remove entries with verify-task or plan-checkbox
     | if .hooks.TaskCompleted then
         .hooks.TaskCompleted = [
             .hooks.TaskCompleted[] |
-            select(.hooks // [] | map(.command // "" | test("verify-task")) | any | not)
+            select(.hooks // [] | map(.command // "" | test("verify-task|plan-checkbox")) | any | not)
         ] |
         if (.hooks.TaskCompleted | length) == 0 then del(.hooks.TaskCompleted) else . end
       else . end
@@ -111,7 +111,7 @@ echo "Updated: $SETTINGS"
 REMOVED=0
 
 # Bash hooks
-for f in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
+for f in verify-task.sh plan-checkbox.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
     if [ -f "$HOOKS_DIR/$f" ]; then
         rm "$HOOKS_DIR/$f"
         echo "Removed: $HOOKS_DIR/$f"
@@ -120,7 +120,7 @@ for f in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safe
 done
 
 # PowerShell hooks
-for f in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
+for f in verify-task.ps1 plan-checkbox.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
     if [ -f "$HOOKS_DIR/$f" ]; then
         rm "$HOOKS_DIR/$f"
         echo "Removed: $HOOKS_DIR/$f"

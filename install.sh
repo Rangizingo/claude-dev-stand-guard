@@ -47,6 +47,7 @@ _has_hook() {
 }
 
 NEED_TASK=false
+NEED_PLAN_CHECKBOX=false
 NEED_STOP=false
 NEED_STOP_REVIEW=false
 NEED_POST_TOOL_USE=false
@@ -54,13 +55,14 @@ NEED_BASH_SAFETY=false
 NEED_POST_COMPACT=false
 
 _has_hook "TaskCompleted" "verify-task" || NEED_TASK=true
+_has_hook "TaskCompleted" "plan-checkbox" || NEED_PLAN_CHECKBOX=true
 _has_hook "Stop" "verify-stop" || NEED_STOP=true
 _has_hook "Stop" "review-gate" || NEED_STOP_REVIEW=true
 _has_hook "PostToolUse" "post_tool_use" || NEED_POST_TOOL_USE=true
 _has_hook "PreToolUse" "bash-safety" || NEED_BASH_SAFETY=true
 _has_hook "SessionStart" "post-compact" || NEED_POST_COMPACT=true
 
-if [ "$NEED_TASK" = false ] && [ "$NEED_STOP" = false ] && \
+if [ "$NEED_TASK" = false ] && [ "$NEED_PLAN_CHECKBOX" = false ] && [ "$NEED_STOP" = false ] && \
    [ "$NEED_STOP_REVIEW" = false ] && [ "$NEED_POST_TOOL_USE" = false ] && \
    [ "$NEED_BASH_SAFETY" = false ] && [ "$NEED_POST_COMPACT" = false ]; then
     echo "stand-guard hooks are already installed. All hooks present."
@@ -87,6 +89,15 @@ TASK_HOOK='{
     "command": "bash \"$HOME/.claude/hooks/verify-task.sh\"",
     "timeout": 120,
     "statusMessage": "stand-guard: verifying task (tests + coverage)"
+  }]
+}'
+
+PLAN_CHECKBOX_HOOK='{
+  "hooks": [{
+    "type": "command",
+    "command": "bash \"$HOME/.claude/hooks/plan-checkbox.sh\"",
+    "timeout": 10,
+    "statusMessage": "stand-guard: updating plan.md checkbox"
   }]
 }'
 
@@ -142,7 +153,11 @@ POST_COMPACT_HOOK='{
 JQ_EXPR="."
 
 if [ "$NEED_TASK" = true ]; then
-    JQ_EXPR="$JQ_EXPR | .hooks.TaskCompleted = [\$task_hook]"
+    JQ_EXPR="$JQ_EXPR | .hooks.TaskCompleted = ((.hooks.TaskCompleted // []) + [\$task_hook])"
+fi
+
+if [ "$NEED_PLAN_CHECKBOX" = true ]; then
+    JQ_EXPR="$JQ_EXPR | .hooks.TaskCompleted = ((.hooks.TaskCompleted // []) + [\$plan_checkbox_hook])"
 fi
 
 if [ "$NEED_STOP" = true ]; then
@@ -171,6 +186,7 @@ fi
 
 NEW_SETTINGS="$(jq \
     --argjson task_hook "$TASK_HOOK" \
+    --argjson plan_checkbox_hook "$PLAN_CHECKBOX_HOOK" \
     --argjson stop_cmd_hook "$STOP_CMD_HOOK" \
     --argjson stop_review_hook "$STOP_REVIEW_HOOK" \
     --argjson ptu_hook "$POST_TOOL_USE_HOOK" \
@@ -183,6 +199,7 @@ if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] Hooks to add:"
     echo ""
     [ "$NEED_TASK" = true ] && echo "  hooks.TaskCompleted -> verify-task.sh"
+    [ "$NEED_PLAN_CHECKBOX" = true ] && echo "  hooks.TaskCompleted -> plan-checkbox.sh"
     [ "$NEED_STOP" = true ] && echo "  hooks.Stop -> verify-stop.sh"
     [ "$NEED_STOP_REVIEW" = true ] && echo "  hooks.Stop -> review-gate.sh"
     [ "$NEED_POST_TOOL_USE" = true ] && echo "  hooks.PostToolUse -> post_tool_use.sh"
@@ -210,7 +227,7 @@ echo "Updated: $SETTINGS"
 mkdir -p "$LIB_DIR"
 
 # Bash hooks
-for src in verify-task.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
+for src in verify-task.sh plan-checkbox.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
     cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
     chmod +x "$HOOKS_DIR/$src"
     echo "Installed: $HOOKS_DIR/$src"
@@ -221,7 +238,7 @@ chmod +x "$LIB_DIR/detect-stack.sh"
 echo "Installed: $LIB_DIR/detect-stack.sh"
 
 # PowerShell hooks (for Windows via claude-config-sync)
-for src in verify-task.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
+for src in verify-task.ps1 plan-checkbox.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
     if [ -f "$SCRIPT_DIR/hooks/$src" ]; then
         cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
         echo "Installed: $HOOKS_DIR/$src"
@@ -240,6 +257,7 @@ echo "stand-guard installed successfully."
 echo ""
 echo "Hooks added:"
 [ "$NEED_TASK" = true ] && echo "  TaskCompleted -> verify-task.sh (blocks if tests fail or no tests written)"
+[ "$NEED_PLAN_CHECKBOX" = true ] && echo "  TaskCompleted -> plan-checkbox.sh (auto-checks plan.md items on task completion)"
 [ "$NEED_STOP" = true ] && echo "  Stop -> verify-stop.sh (blocks if lint/test/build fail)"
 [ "$NEED_STOP_REVIEW" = true ] && echo "  Stop -> review-gate.sh (blocks if substantial changes lack code review)"
 [ "$NEED_POST_TOOL_USE" = true ] && echo "  PostToolUse -> post_tool_use.sh (auto-format + lint on every edit)"
