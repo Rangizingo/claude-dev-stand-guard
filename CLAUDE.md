@@ -24,6 +24,7 @@ ADVISORY (already built, tells Claude what to do)
 ENFORCEMENT (this project, makes it impossible to skip)
 ├── hooks/lib/detect-stack.sh  Auto-detect test/build/lint for 12 stacks (+ PATH augmentation)
 ├── hooks/verify-task.sh       TaskCompleted: block if tests fail or new code has no tests
+├── hooks/plan-checkbox.sh     TaskCompleted: auto-mark matching plan.md items as done
 ├── hooks/verify-stop.sh       Stop: block if lint/test/build fail
 ├── hooks/review-gate.sh       Stop: block if substantial changes lack code review
 ├── hooks/post_tool_use.sh     PostToolUse: format + typecheck + lint every file edit
@@ -47,6 +48,7 @@ claude-dev-stand-guard/
 ├── README.md                      # Documentation + install guide
 ├── hooks/
 │   ├── verify-task.sh (.ps1)      # TaskCompleted: run tests + check test files exist
+│   ├── plan-checkbox.sh (.ps1)    # TaskCompleted: fuzzy-match task subject -> plan.md [x]
 │   ├── verify-stop.sh (.ps1)      # Stop: full lint + test + build gate
 │   ├── review-gate.sh (.ps1)      # Stop: block without code review
 │   ├── post_tool_use.sh (.ps1)    # PostToolUse: format + typecheck + lint on edit
@@ -61,6 +63,7 @@ claude-dev-stand-guard/
 └── tests/
     ├── test-detect-stack.sh       # Stack detection + package managers (82 tests)
     ├── test-verify-task.sh        # Task verification hook (13 tests)
+    ├── test-plan-checkbox.sh      # Plan.md auto-checkbox hook (25 tests)
     ├── test-verify-stop.sh        # Stop verification hook (17 tests)
     ├── test-post-tool-use.sh      # Per-edit format/typecheck/lint, all languages (33 tests)
     └── test-all-hooks.sh          # End-to-end installed hooks + settings integrity (61 tests)
@@ -121,9 +124,10 @@ Node package manager is auto-detected from lockfile: `pnpm-lock.yaml` -> pnpm, `
 
 ## Commands
 ```bash
-# Run all tests (206 total)
+# Run all tests (231 total)
 bash tests/test-detect-stack.sh      # Stack detection (82 tests)
 bash tests/test-verify-task.sh       # Task gate (13 tests)
+bash tests/test-plan-checkbox.sh     # Plan.md auto-checkbox (25 tests)
 bash tests/test-verify-stop.sh       # Stop gate (17 tests)
 bash tests/test-post-tool-use.sh     # Edit-time hooks, all languages (33 tests)
 bash tests/test-all-hooks.sh         # End-to-end installed hooks (61 tests)

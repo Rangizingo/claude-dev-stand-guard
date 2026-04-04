@@ -6,11 +6,12 @@ Enforcement hooks for Claude Code. Three bash scripts that make it impossible to
 
 Your advisory config (rules, skills, agents) tells Claude what to do. Stand Guard makes it impossible not to.
 
-| Hook | Event | What it blocks |
+| Hook | Event | What it does |
 |---|---|---|
-| `verify-task.sh` | TaskCompleted | Tests fail, or >20 lines of new code with zero test files modified |
-| `verify-stop.sh` | Stop | Lint, test, or build failures |
-| review agent | Stop | Substantial changes shipped without code review evidence |
+| `verify-task.sh` | TaskCompleted | Blocks if tests fail, or >20 lines of new code with zero test files modified |
+| `plan-checkbox.sh` | TaskCompleted | Auto-marks matching plan.md items as `[x]` when a task completes (never blocks) |
+| `verify-stop.sh` | Stop | Blocks if lint, test, or build failures |
+| `review-gate.sh` | Stop | Blocks if substantial changes shipped without code review evidence |
 
 When a hook blocks, it writes the reason to stderr. Claude reads that and fixes the issue before trying again.
 
@@ -23,13 +24,13 @@ ADVISORY (tells Claude what to do)
   agents/        qa-reviewer
 
 ENFORCEMENT (makes skipping impossible)      <-- this project
-  verify-task.sh     TaskCompleted gate
+  verify-task.sh     TaskCompleted gate (tests + coverage)
+  plan-checkbox.sh   TaskCompleted auto-update (plan.md checkboxes)
   verify-stop.sh     Stop gate (lint + test + build)
-  review agent       Stop gate (code review check)
-
-EXISTING ENFORCEMENT (unchanged)
-  post_tool_use.sh   Format + lint on every edit
-  bash-safety.sh     Block destructive commands
+  review-gate.sh     Stop gate (code review check)
+  post_tool_use.sh   PostToolUse: format + lint on every edit
+  bash-safety.sh     PreToolUse: block destructive commands
+  post-compact.sh    SessionStart: restore context after compaction
 ```
 
 ## Supported stacks
