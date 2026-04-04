@@ -98,8 +98,9 @@ while IFS= read -r line_data; do
     fi
 done < <(grep -n '^\- \[ \]' "$PLAN_FILE" 2>/dev/null || true)
 
-# No match found
+# No match found — remind Claude to check manually
 if [ -z "$MATCH_LINE" ] || [ "$MATCH_NUM" -eq 0 ]; then
+    echo "plan-checkbox: no auto-match for \"$TASK_SUBJECT\". If this task completed plan.md items, check them off manually." >&2
     exit 0
 fi
 

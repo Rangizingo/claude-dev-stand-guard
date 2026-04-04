@@ -41,6 +41,7 @@ if ($words.Count -lt 2) { exit 0 }
 $sortedWords = $words | Sort-Object { $_.Length } -Descending | Select-Object -First 3
 
 # Read plan.md and find unchecked lines matching all words
+$matched = $false
 $lines = Get-Content $planFile
 for ($i = 0; $i -lt $lines.Count; $i++) {
     $line = $lines[$i]
@@ -58,8 +59,13 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
         $lines[$i] = $line -replace '- \[ \]', '- [x]'
         $lines | Set-Content $planFile -Encoding UTF8
         Write-Host "plan-checkbox: marked done in plan.md line $($i + 1)" -ForegroundColor Green
+        $matched = $true
         break
     }
+}
+
+if (-not $matched) {
+    [Console]::Error.WriteLine("plan-checkbox: no auto-match for `"$taskSubject`". If this task completed plan.md items, check them off manually.")
 }
 
 exit 0
