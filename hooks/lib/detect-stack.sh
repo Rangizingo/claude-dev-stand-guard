@@ -8,6 +8,7 @@
 DETECTED_STACK=""
 TEST_CMD=""
 BUILD_CMD=""
+DEPLOY_BUILD_CMD=""
 LINT_CMD=""
 SOURCE_PATTERN=""
 
@@ -145,6 +146,15 @@ _detect_stack() {
                 if _has_npm_script "$pkg" "lint"; then
                     LINT_CMD="$(_node_cmd "$mgr" "lint")"
                 fi
+                # Deployment-specific build (CF Pages, Vercel, etc.)
+                # Stricter than standard build — catches platform-specific errors.
+                # Checks common script names in priority order.
+                for deploy_script in "pages:build" "deploy:build" "build:cf" "build:pages" "build:deploy" "build:production"; do
+                    if _has_npm_script "$pkg" "$deploy_script"; then
+                        DEPLOY_BUILD_CMD="$(_node_cmd "$mgr" "$deploy_script")"
+                        break
+                    fi
+                done
             fi
             return 0
         fi

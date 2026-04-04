@@ -109,6 +109,15 @@ if ($BUILD_CMD) {
     }
 }
 
+# Deploy build (platform-specific: CF Pages, Vercel, etc.)
+if ($DEPLOY_BUILD_CMD) {
+    $result = Invoke-CheckCmd -Cmd $DEPLOY_BUILD_CMD
+    if ($result.ExitCode -ne 0) {
+        $hadFailure = $true
+        $errors += "Deploy build failed (exit $($result.ExitCode)):`n$($result.Output)`n`n"
+    }
+}
+
 # If any failed, block stop
 if ($hadFailure) {
     [Console]::Error.WriteLine("Fix these issues before stopping:")

@@ -111,6 +111,20 @@ $BUILD_OUTPUT
     fi
 fi
 
+# Deploy build (platform-specific: CF Pages, Vercel, etc.)
+if [ -n "${DEPLOY_BUILD_CMD:-}" ]; then
+    DEPLOY_OUTPUT=""
+    DEPLOY_EXIT=0
+    DEPLOY_OUTPUT="$($DEPLOY_BUILD_CMD 2>&1)" || DEPLOY_EXIT=$?
+    if [ "$DEPLOY_EXIT" -ne 0 ]; then
+        HAD_FAILURE=1
+        ERRORS="${ERRORS}Deploy build failed (exit $DEPLOY_EXIT):
+$DEPLOY_OUTPUT
+
+"
+    fi
+fi
+
 # If any failed, block stop
 if [ "$HAD_FAILURE" -ne 0 ]; then
     echo "Fix these issues before stopping:" >&2

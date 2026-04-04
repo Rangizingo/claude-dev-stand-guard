@@ -7,6 +7,7 @@
 $DETECTED_STACK   = ""
 $TEST_CMD         = ""
 $BUILD_CMD        = ""
+$DEPLOY_BUILD_CMD = ""
 $LINT_CMD         = ""
 $SOURCE_PATTERN   = ""
 
@@ -133,6 +134,13 @@ function _DetectStack {
                 if (_HasNpmScript $pkg "test")  { $script:TEST_CMD  = _NodeCmd $mgr "test" }
                 if (_HasNpmScript $pkg "build") { $script:BUILD_CMD = _NodeCmd $mgr "build" }
                 if (_HasNpmScript $pkg "lint")  { $script:LINT_CMD  = _NodeCmd $mgr "lint" }
+                # Deployment-specific build (CF Pages, Vercel, etc.)
+                foreach ($ds in @("pages:build", "deploy:build", "build:cf", "build:pages", "build:deploy", "build:production")) {
+                    if (_HasNpmScript $pkg $ds) {
+                        $script:DEPLOY_BUILD_CMD = _NodeCmd $mgr $ds
+                        break
+                    }
+                }
             }
             return
         }
