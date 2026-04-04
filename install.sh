@@ -62,23 +62,25 @@ _has_hook "PostToolUse" "post_tool_use" || NEED_POST_TOOL_USE=true
 _has_hook "PreToolUse" "bash-safety" || NEED_BASH_SAFETY=true
 _has_hook "SessionStart" "post-compact" || NEED_POST_COMPACT=true
 
+ALL_HOOKS_REGISTERED=false
 if [ "$NEED_TASK" = false ] && [ "$NEED_PLAN_CHECKBOX" = false ] && [ "$NEED_STOP" = false ] && \
    [ "$NEED_STOP_REVIEW" = false ] && [ "$NEED_POST_TOOL_USE" = false ] && \
    [ "$NEED_BASH_SAFETY" = false ] && [ "$NEED_POST_COMPACT" = false ]; then
-    echo "stand-guard hooks are already installed. All hooks present."
-    exit 0
+    ALL_HOOKS_REGISTERED=true
 fi
 
-# --- Backup ---
+# --- Backup (only if settings need updating) ---
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP="$SETTINGS.bak.$TIMESTAMP"
 
-if [ "$DRY_RUN" = false ]; then
-    cp "$SETTINGS" "$BACKUP"
-    echo "Backup: $BACKUP"
-else
-    echo "[DRY RUN] Would backup $SETTINGS to $SETTINGS.bak.$TIMESTAMP"
+if [ "$ALL_HOOKS_REGISTERED" = false ]; then
+    if [ "$DRY_RUN" = false ]; then
+        cp "$SETTINGS" "$BACKUP"
+        echo "Backup: $BACKUP"
+    else
+        echo "[DRY RUN] Would backup $SETTINGS to $SETTINGS.bak.$TIMESTAMP"
+    fi
 fi
 
 # --- Hook definitions ---
@@ -182,87 +184,111 @@ if [ "$NEED_POST_COMPACT" = true ]; then
     JQ_EXPR="$JQ_EXPR | .hooks.SessionStart = ((.hooks.SessionStart // []) + [\$compact_hook])"
 fi
 
-# --- Apply merge ---
+# --- Apply merge (only if new hooks need registering) ---
 
-NEW_SETTINGS="$(jq \
-    --argjson task_hook "$TASK_HOOK" \
-    --argjson plan_checkbox_hook "$PLAN_CHECKBOX_HOOK" \
-    --argjson stop_cmd_hook "$STOP_CMD_HOOK" \
-    --argjson stop_review_hook "$STOP_REVIEW_HOOK" \
-    --argjson ptu_hook "$POST_TOOL_USE_HOOK" \
-    --argjson bs_hook "$BASH_SAFETY_HOOK" \
-    --argjson compact_hook "$POST_COMPACT_HOOK" \
-    "$JQ_EXPR" \
-    "$SETTINGS")"
+if [ "$ALL_HOOKS_REGISTERED" = false ]; then
+    NEW_SETTINGS="$(jq \
+        --argjson task_hook "$TASK_HOOK" \
+        --argjson plan_checkbox_hook "$PLAN_CHECKBOX_HOOK" \
+        --argjson stop_cmd_hook "$STOP_CMD_HOOK" \
+        --argjson stop_review_hook "$STOP_REVIEW_HOOK" \
+        --argjson ptu_hook "$POST_TOOL_USE_HOOK" \
+        --argjson bs_hook "$BASH_SAFETY_HOOK" \
+        --argjson compact_hook "$POST_COMPACT_HOOK" \
+        "$JQ_EXPR" \
+        "$SETTINGS")"
+
+    if [ "$DRY_RUN" = true ]; then
+        echo "[DRY RUN] Hooks to add:"
+        echo ""
+        [ "$NEED_TASK" = true ] && echo "  hooks.TaskCompleted -> verify-task.sh"
+        [ "$NEED_PLAN_CHECKBOX" = true ] && echo "  hooks.TaskCompleted -> plan-checkbox.sh"
+        [ "$NEED_STOP" = true ] && echo "  hooks.Stop -> verify-stop.sh"
+        [ "$NEED_STOP_REVIEW" = true ] && echo "  hooks.Stop -> review-gate.sh"
+        [ "$NEED_POST_TOOL_USE" = true ] && echo "  hooks.PostToolUse -> post_tool_use.sh"
+        [ "$NEED_BASH_SAFETY" = true ] && echo "  hooks.PreToolUse -> bash-safety.sh"
+        [ "$NEED_POST_COMPACT" = true ] && echo "  hooks.SessionStart -> post-compact.sh (compact)"
+        echo ""
+    fi
+
+    if [ "$DRY_RUN" = false ]; then
+        echo "$NEW_SETTINGS" | jq . > "$SETTINGS"
+        echo "Updated: $SETTINGS"
+    fi
+else
+    echo "Hook registrations up to date."
+fi
+
+# --- Copy hook scripts (always, to pick up updates) ---
 
 if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] Hooks to add:"
-    echo ""
-    [ "$NEED_TASK" = true ] && echo "  hooks.TaskCompleted -> verify-task.sh"
-    [ "$NEED_PLAN_CHECKBOX" = true ] && echo "  hooks.TaskCompleted -> plan-checkbox.sh"
-    [ "$NEED_STOP" = true ] && echo "  hooks.Stop -> verify-stop.sh"
-    [ "$NEED_STOP_REVIEW" = true ] && echo "  hooks.Stop -> review-gate.sh"
-    [ "$NEED_POST_TOOL_USE" = true ] && echo "  hooks.PostToolUse -> post_tool_use.sh"
-    [ "$NEED_BASH_SAFETY" = true ] && echo "  hooks.PreToolUse -> bash-safety.sh"
-    [ "$NEED_POST_COMPACT" = true ] && echo "  hooks.SessionStart -> post-compact.sh (compact)"
-    echo ""
-    echo "[DRY RUN] Files to copy:"
-    echo "  hooks/verify-task.sh, verify-stop.sh, review-gate.sh"
-    echo "  hooks/post_tool_use.sh, bash-safety.sh, post-compact.sh"
-    echo "  hooks/lib/detect-stack.sh"
-    echo "  + .ps1 equivalents for all above"
-    echo ""
-    echo "[DRY RUN] Merged settings.json diff:"
-    diff <(jq --sort-keys . "$SETTINGS") <(echo "$NEW_SETTINGS" | jq --sort-keys .) || true
+    echo "[DRY RUN] Would copy hook scripts to $HOOKS_DIR/"
     exit 0
 fi
 
-# --- Write settings ---
-
-echo "$NEW_SETTINGS" | jq . > "$SETTINGS"
-echo "Updated: $SETTINGS"
-
-# --- Copy hook scripts ---
-
 mkdir -p "$LIB_DIR"
+
+UPDATED=0
 
 # Bash hooks
 for src in verify-task.sh plan-checkbox.sh verify-stop.sh review-gate.sh post_tool_use.sh bash-safety.sh post-compact.sh; do
-    cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
-    chmod +x "$HOOKS_DIR/$src"
-    echo "Installed: $HOOKS_DIR/$src"
+    if [ -f "$SCRIPT_DIR/hooks/$src" ]; then
+        if ! cmp -s "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src" 2>/dev/null; then
+            cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
+            chmod +x "$HOOKS_DIR/$src"
+            echo "Updated: $HOOKS_DIR/$src"
+            UPDATED=$((UPDATED + 1))
+        fi
+    fi
 done
 
-cp "$SCRIPT_DIR/hooks/lib/detect-stack.sh" "$LIB_DIR/detect-stack.sh"
-chmod +x "$LIB_DIR/detect-stack.sh"
-echo "Installed: $LIB_DIR/detect-stack.sh"
+if ! cmp -s "$SCRIPT_DIR/hooks/lib/detect-stack.sh" "$LIB_DIR/detect-stack.sh" 2>/dev/null; then
+    cp "$SCRIPT_DIR/hooks/lib/detect-stack.sh" "$LIB_DIR/detect-stack.sh"
+    chmod +x "$LIB_DIR/detect-stack.sh"
+    echo "Updated: $LIB_DIR/detect-stack.sh"
+    UPDATED=$((UPDATED + 1))
+fi
 
 # PowerShell hooks (for Windows via claude-config-sync)
 for src in verify-task.ps1 plan-checkbox.ps1 verify-stop.ps1 review-gate.ps1 post_tool_use.ps1 bash-safety.ps1 post-compact.ps1; do
     if [ -f "$SCRIPT_DIR/hooks/$src" ]; then
-        cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
-        echo "Installed: $HOOKS_DIR/$src"
+        if ! cmp -s "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src" 2>/dev/null; then
+            cp "$SCRIPT_DIR/hooks/$src" "$HOOKS_DIR/$src"
+            echo "Updated: $HOOKS_DIR/$src"
+            UPDATED=$((UPDATED + 1))
+        fi
     fi
 done
 
 if [ -f "$SCRIPT_DIR/hooks/lib/detect-stack.ps1" ]; then
-    cp "$SCRIPT_DIR/hooks/lib/detect-stack.ps1" "$LIB_DIR/detect-stack.ps1"
-    echo "Installed: $LIB_DIR/detect-stack.ps1"
+    if ! cmp -s "$SCRIPT_DIR/hooks/lib/detect-stack.ps1" "$LIB_DIR/detect-stack.ps1" 2>/dev/null; then
+        cp "$SCRIPT_DIR/hooks/lib/detect-stack.ps1" "$LIB_DIR/detect-stack.ps1"
+        echo "Updated: $LIB_DIR/detect-stack.ps1"
+        UPDATED=$((UPDATED + 1))
+    fi
 fi
 
 # --- Summary ---
 
 echo ""
-echo "stand-guard installed successfully."
+if [ "$ALL_HOOKS_REGISTERED" = true ] && [ "$UPDATED" -eq 0 ]; then
+    echo "stand-guard is up to date. Nothing to do."
+elif [ "$UPDATED" -gt 0 ]; then
+    echo "stand-guard updated $UPDATED hook script(s)."
+else
+    echo "stand-guard installed successfully."
+fi
 echo ""
-echo "Hooks added:"
-[ "$NEED_TASK" = true ] && echo "  TaskCompleted -> verify-task.sh (blocks if tests fail or no tests written)"
-[ "$NEED_PLAN_CHECKBOX" = true ] && echo "  TaskCompleted -> plan-checkbox.sh (auto-checks plan.md items on task completion)"
-[ "$NEED_STOP" = true ] && echo "  Stop -> verify-stop.sh (blocks if lint/test/build fail)"
-[ "$NEED_STOP_REVIEW" = true ] && echo "  Stop -> review-gate.sh (blocks if substantial changes lack code review)"
-[ "$NEED_POST_TOOL_USE" = true ] && echo "  PostToolUse -> post_tool_use.sh (auto-format + lint on every edit)"
-[ "$NEED_BASH_SAFETY" = true ] && echo "  PreToolUse -> bash-safety.sh (blocks dangerous bash commands)"
-[ "$NEED_POST_COMPACT" = true ] && echo "  SessionStart -> post-compact.sh (restores context after compaction)"
-echo ""
+if [ "$ALL_HOOKS_REGISTERED" = false ]; then
+    echo "Hooks registered:"
+    [ "$NEED_TASK" = true ] && echo "  TaskCompleted -> verify-task.sh"
+    [ "$NEED_PLAN_CHECKBOX" = true ] && echo "  TaskCompleted -> plan-checkbox.sh"
+    [ "$NEED_STOP" = true ] && echo "  Stop -> verify-stop.sh"
+    [ "$NEED_STOP_REVIEW" = true ] && echo "  Stop -> review-gate.sh"
+    [ "$NEED_POST_TOOL_USE" = true ] && echo "  PostToolUse -> post_tool_use.sh"
+    [ "$NEED_BASH_SAFETY" = true ] && echo "  PreToolUse -> bash-safety.sh"
+    [ "$NEED_POST_COMPACT" = true ] && echo "  SessionStart -> post-compact.sh"
+    echo ""
+fi
 echo "To verify: restart Claude Code and check /hooks"
 echo "To remove: bash $SCRIPT_DIR/uninstall.sh"
