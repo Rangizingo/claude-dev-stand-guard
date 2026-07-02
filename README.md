@@ -1,3 +1,8 @@
+> ## SUPERSEDED
+> This repo seeded 7 hooks in April 2026. The live tree at `~/.claude` (repo: `my-claude-config`) is the source of truth and has evolved. Running `install.sh` would overwrite 6 diverged hooks with stale versions.
+>
+> `install.sh` has been renamed to `install.sh.superseded` to prevent accidental use. Do not run it against `~/.claude`.
+
 # Stand Guard
 
 Enforcement hooks for Claude Code. Three bash scripts that make it impossible to skip testing, linting, building, or code review.
