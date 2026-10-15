@@ -1,3 +1,8 @@
+> ## Status (October 2026)
+> This is the original April 2026 version: the first enforcement hooks I wrote for Claude Code. The system has since grown to about 130 checks, backed by about 480 test files, running across Claude Code, pi and Codex. Between Sep 28 and Oct 15, 2026 its logs recorded 6,290 blocked agent actions across 142 sessions (measured). The current version lives in my private Claude Code configuration alongside client work, so it isn't public; I'm glad to share it on request.
+>
+> `install.sh` has been renamed to `install.sh.superseded`. Don't run it against a live `~/.claude`: it would overwrite newer hooks with these older ones.
+
 # Stand Guard
 
 Enforcement hooks for Claude Code. Three bash scripts that make it impossible to skip testing, linting, building, or code review.
